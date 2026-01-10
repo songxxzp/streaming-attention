@@ -1,0 +1,53 @@
+# 编译产物
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+
+# 可执行文件
+test_correctness
+test_omp
+test_omp_simple
+test_mpi
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.bak
+*.cmake
+!CMakeLists.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+*.orig
+
+# Core dumps
+core
+core.*
+
+# 性能分析
+*.prof
+*.out
+gmon.out

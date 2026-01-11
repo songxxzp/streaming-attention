@@ -588,5 +588,353 @@ Tensor qwen3_forward(
     return output;
 }
 
+// ============================================================================
+// Qwen3 with KV Cache Support
+// ============================================================================
+
+Tensor qwen3_decoder_layer_with_cache(
+    const Tensor& hidden_states,
+    KVCache* kv_cache,
+    size_t layer_idx,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin
+) {
+    // Input layernorm
+    Tensor residual = hidden_states;
+    Tensor normed = ops::rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
+
+    const Shape& hidden_shape = hidden_states.shape();
+    size_t batch = hidden_shape[0];
+    size_t seq_len = hidden_shape[1];
+    size_t hidden_size = hidden_shape[2];
+
+    // Split QKV projections
+    size_t q_size = num_attention_heads * head_dim;
+    size_t k_size = num_key_value_heads * head_dim;
+    size_t v_size = num_key_value_heads * head_dim;
+
+    // Extract Q, K, V from combined QKV
+    std::vector<float> q_data(q_size * hidden_size);
+    std::vector<float> k_data(k_size * hidden_size);
+    std::vector<float> v_data(v_size * hidden_size);
+
+    for (size_t row = 0; row < q_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            q_data[row * hidden_size + col] = qkv_projs[row * hidden_size + col];
+        }
+    }
+
+    for (size_t row = 0; row < k_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            k_data[row * hidden_size + col] = qkv_projs[(q_size + row) * hidden_size + col];
+        }
+    }
+
+    for (size_t row = 0; row < v_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            v_data[row * hidden_size + col] = qkv_projs[(q_size + k_size + row) * hidden_size + col];
+        }
+    }
+
+    Tensor q_proj(std::move(q_data), Shape({static_cast<long>(q_size), static_cast<long>(hidden_size)}));
+    Tensor k_proj(std::move(k_data), Shape({static_cast<long>(k_size), static_cast<long>(hidden_size)}));
+    Tensor v_proj(std::move(v_data), Shape({static_cast<long>(v_size), static_cast<long>(hidden_size)}));
+
+    // Compute QKV projections
+    Tensor q_proj_out = ops::linear(normed, q_proj, nullptr);
+    Tensor k_proj_out = ops::linear(normed, k_proj, nullptr);
+    Tensor v_proj_out = ops::linear(normed, v_proj, nullptr);
+
+    // Reshape to [batch, num_heads, seq_len, head_dim]
+    Tensor q_reshaped = q_proj_out.view({batch, seq_len, num_attention_heads, head_dim});
+    Tensor k_reshaped = k_proj_out.view({batch, seq_len, num_key_value_heads, head_dim});
+    Tensor v_reshaped = v_proj_out.view({batch, seq_len, num_key_value_heads, head_dim});
+
+    // Transpose to [batch, num_heads, seq_len, head_dim]
+    Tensor q = q_reshaped.transpose(1, 2);
+    Tensor k = k_reshaped.transpose(1, 2);
+    Tensor v = v_reshaped.transpose(1, 2);
+
+    // Apply QKNorm
+    const float* q_norm_data = q_norm_weight.data();
+    const float* k_norm_data = k_norm_weight.data();
+
+    // QKNorm for Q
+    size_t q_total_elements = batch * num_attention_heads * seq_len * head_dim;
+    std::vector<float> q_normed_data(q_total_elements);
+    #pragma omp parallel for if(batch * num_attention_heads * seq_len * head_dim > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < num_attention_heads; ++h) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                size_t base_idx = ((b * num_attention_heads + h) * seq_len + s) * head_dim;
+
+                // Compute variance
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < head_dim; ++i) {
+                    float val = q[base_idx + i];
+                    sum_sq += val * val;
+                }
+                float variance = sum_sq / head_dim;
+                float rms = std::sqrt(variance + 1e-6f);
+
+                // Normalize and scale
+                for (size_t i = 0; i < head_dim; ++i) {
+                    q_normed_data[base_idx + i] = (q[base_idx + i] / rms) * q_norm_data[i];
+                }
+            }
+        }
+    }
+    Tensor q_normed(std::move(q_normed_data), q.shape());
+
+    // QKNorm for K
+    size_t k_total_elements = batch * num_key_value_heads * seq_len * head_dim;
+    std::vector<float> k_normed_data(k_total_elements);
+    #pragma omp parallel for if(batch * num_key_value_heads * seq_len * head_dim > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < num_key_value_heads; ++h) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                size_t base_idx = ((b * num_key_value_heads + h) * seq_len + s) * head_dim;
+
+                // Compute variance
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < head_dim; ++i) {
+                    float val = k[base_idx + i];
+                    sum_sq += val * val;
+                }
+                float variance = sum_sq / head_dim;
+                float rms = std::sqrt(variance + 1e-6f);
+
+                // Normalize and scale
+                for (size_t i = 0; i < head_dim; ++i) {
+                    k_normed_data[base_idx + i] = (k[base_idx + i] / rms) * k_norm_data[i];
+                }
+            }
+        }
+    }
+    Tensor k_normed(std::move(k_normed_data), k.shape());
+
+    // Apply RoPE with correct position offset
+    // When using KV cache, new tokens need RoPE for positions starting at cached_seq_len
+    Tensor cos_for_rope, sin_for_rope;
+    size_t rope_offset = 0;
+
+    if (kv_cache != nullptr && kv_cache->current_seq_len > 0) {
+        // Decode phase: use cos/sin starting from current cached position
+        rope_offset = kv_cache->current_seq_len;
+        size_t half_dim = head_dim / 2;
+
+        // Slice cos/sin to get only the rows we need [seq_len, half_dim]
+        // where seq_len is the number of new tokens (usually 1)
+        std::vector<float> cos_slice_data(seq_len * half_dim);
+        std::vector<float> sin_slice_data(seq_len * half_dim);
+
+        for (size_t s = 0; s < seq_len; ++s) {
+            size_t src_pos = rope_offset + s;  // Actual position in the full sequence
+            for (size_t i = 0; i < half_dim; ++i) {
+                cos_slice_data[s * half_dim + i] = cos[src_pos * half_dim + i];
+                sin_slice_data[s * half_dim + i] = sin[src_pos * half_dim + i];
+            }
+        }
+
+        cos_for_rope = Tensor(std::move(cos_slice_data),
+                             Shape({static_cast<long>(seq_len), static_cast<long>(half_dim)}));
+        sin_for_rope = Tensor(std::move(sin_slice_data),
+                             Shape({static_cast<long>(seq_len), static_cast<long>(half_dim)}));
+    } else {
+        // Prefill phase: use cos/sin starting from position 0
+        cos_for_rope = cos;
+        sin_for_rope = sin;
+    }
+
+    auto [q_rope, k_rope] = apply_rotary_pos_emb(q_normed, k_normed, cos_for_rope, sin_for_rope);
+
+    // Handle KV cache
+    Tensor k_final, v_final;
+
+    if (kv_cache != nullptr && kv_cache->current_seq_len > 0) {
+        // Has cache: concatenate cached K/V with new K/V
+        size_t cached_seq_len = kv_cache->current_seq_len;
+
+        // Get cached keys and values for this layer
+        Tensor k_cached = kv_cache->get_cached_keys(layer_idx, cached_seq_len);
+        Tensor v_cached = kv_cache->get_cached_values(layer_idx, cached_seq_len);
+
+        // Reshape to [batch, num_kv_heads, cached_seq_len, head_dim]
+        k_cached = k_cached.view({batch, num_key_value_heads, cached_seq_len, head_dim});
+        v_cached = v_cached.view({batch, num_key_value_heads, cached_seq_len, head_dim});
+
+        // Concatenate cached and new along seq_len dimension
+        // k_final: [batch, num_kv_heads, cached_seq_len + 1, head_dim]
+        // v_final: [batch, num_kv_heads, cached_seq_len + 1, head_dim]
+
+        size_t total_seq_len = cached_seq_len + 1;
+        std::vector<float> k_final_data(batch * num_key_value_heads * total_seq_len * head_dim);
+        std::vector<float> v_final_data(batch * num_key_value_heads * total_seq_len * head_dim);
+
+        // Copy cached part
+        for (size_t b = 0; b < batch; ++b) {
+            for (size_t h = 0; h < num_key_value_heads; ++h) {
+                for (size_t s = 0; s < cached_seq_len; ++s) {
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        size_t cached_idx = ((b * num_key_value_heads + h) * cached_seq_len + s) * head_dim + d;
+                        size_t final_idx = ((b * num_key_value_heads + h) * total_seq_len + s) * head_dim + d;
+                        k_final_data[final_idx] = k_cached[cached_idx];
+                        v_final_data[final_idx] = v_cached[cached_idx];
+                    }
+                }
+
+                // Copy new part
+                for (size_t d = 0; d < head_dim; ++d) {
+                    size_t new_idx = ((b * num_key_value_heads + h) * 1 + 0) * head_dim + d;
+                    size_t final_idx = ((b * num_key_value_heads + h) * total_seq_len + cached_seq_len) * head_dim + d;
+                    k_final_data[final_idx] = k_rope[((b * num_key_value_heads + h) * 1 + 0) * head_dim + d];
+                    v_final_data[final_idx] = v[((b * num_key_value_heads + h) * 1 + 0) * head_dim + d];
+                }
+            }
+        }
+
+        k_final = Tensor(std::move(k_final_data),
+                         Shape({static_cast<long>(batch),
+                               static_cast<long>(num_key_value_heads),
+                               static_cast<long>(total_seq_len),
+                               static_cast<long>(head_dim)}));
+
+        v_final = Tensor(std::move(v_final_data),
+                         Shape({static_cast<long>(batch),
+                               static_cast<long>(num_key_value_heads),
+                               static_cast<long>(total_seq_len),
+                               static_cast<long>(head_dim)}));
+
+        // Update cache with new K and V (after RoPE for K)
+        // Note: increment_seq_len will be called once per forward pass, not per layer
+        kv_cache->update(layer_idx, k_rope, v);
+
+    } else {
+        // No cache: use new K/V directly
+        k_final = k_rope;
+        v_final = v;
+
+        // Initialize cache if provided
+        // Note: increment_seq_len will be called once per forward pass, not per layer
+        if (kv_cache != nullptr) {
+            kv_cache->update(layer_idx, k_rope, v);
+        }
+    }
+
+    // Repeat KV for GQA
+    int n_rep = static_cast<int>(num_attention_heads / num_key_value_heads);
+    Tensor k_repeated = repeat_kv(k_final, n_rep);
+    Tensor v_repeated = repeat_kv(v_final, n_rep);
+
+    // Compute attention with causal mask
+    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+
+    // Create causal mask
+    size_t total_seq_len = k_final.shape()[2];
+    Tensor causal_mask = create_causal_mask(total_seq_len);
+    Tensor mask = causal_mask.view({1, 1, static_cast<long>(total_seq_len), static_cast<long>(total_seq_len)});
+
+    // Use self_attention from ops
+    Tensor attn_output = ops::self_attention(q_rope, k_repeated, v_repeated, &mask, scale);
+
+    // Transpose back: [batch, seq_len, num_heads, head_dim]
+    Tensor attn_output_t = attn_output.transpose(1, 2);
+
+    // Reshape to [batch, seq_len, num_heads * head_dim]
+    Tensor attn_output_reshaped = attn_output_t.contiguous().view({batch, seq_len, num_attention_heads * head_dim});
+
+    // Apply output projection
+    Tensor output = ops::linear(attn_output_reshaped, o_proj, nullptr);
+
+    // Residual 1
+    Tensor hidden = residual + output;
+
+    // Post attention layernorm
+    residual = hidden;
+    normed = ops::rms_norm(hidden, &post_attention_layernorm_weight, rms_norm_eps);
+
+    // MLP
+    Tensor mlp_out = qwen3_mlp(normed, gate_mlp, up_mlp, down_mlp);
+
+    // Residual 2
+    hidden = residual + mlp_out;
+
+    return hidden;
+}
+
+Tensor qwen3_forward_with_cache(
+    const TensorL& input_ids,
+    KVCache* kv_cache,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps
+) {
+    size_t batch_size = input_ids.shape()[0];
+    size_t seq_len = input_ids.shape()[1];
+    size_t hidden_size = token_embedding.shape()[1];
+
+    // Embed tokens
+    Tensor hidden_states = ops::embedding(input_ids, token_embedding);
+
+    // Precompute RoPE frequencies for maximum sequence length
+    size_t max_seq_len = (kv_cache != nullptr) ? kv_cache->max_seq_len : seq_len;
+    auto [cos, sin] = compute_rope_freqs(max_seq_len, head_dim, 1000000.0f);
+
+    // Pass through decoder layers
+    for (size_t layer_idx = 0; layer_idx < num_layers; ++layer_idx) {
+        const Qwen3LayerWeights& layer = layers[layer_idx];
+
+        hidden_states = qwen3_decoder_layer_with_cache(
+            hidden_states,
+            kv_cache,
+            layer_idx,
+            num_attention_heads,
+            num_key_value_heads,
+            head_dim,
+            rms_norm_eps,
+            layer.input_layernorm_weight,
+            layer.qkv_projs,
+            layer.o_proj,
+            layer.q_norm_weight,
+            layer.k_norm_weight,
+            layer.post_attention_layernorm_weight,
+            layer.gate_proj,
+            layer.up_proj,
+            layer.down_proj,
+            cos,
+            sin
+        );
+    }
+
+    // Increment cache sequence length once per forward pass
+    // Add the number of tokens in this forward pass
+    if (kv_cache != nullptr) {
+        kv_cache->increment_seq_len(seq_len);
+    }
+
+    // Final layer norm
+    Tensor output = ops::rms_norm(hidden_states, &norm_weight, rms_norm_eps);
+
+    return output;
+}
+
 } // namespace qwen3
 } // namespace tensor_cpp

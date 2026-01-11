@@ -14,6 +14,7 @@
 
 #include "tensor_cpp/tensor.h"
 #include "tensor_cpp/ops.h"
+#include "tensor_cpp/kv_cache.h"
 #include <vector>
 #include <cmath>
 #include <complex>
@@ -228,6 +229,82 @@ Tensor qwen3_decoder_layer(
  */
 Tensor qwen3_forward(
     const TensorL& input_ids,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps
+);
+
+// ============================================================================
+// Qwen3 with KV Cache Support
+// ============================================================================
+
+/**
+ * @brief Qwen3 decoder layer with KV cache support
+ *
+ * @param hidden_states Input [batch, seq_len, hidden_size]
+ * @param kv_cache KV cache (can be nullptr for first pass)
+ * @param layer_idx Layer index for KV cache operations
+ * @param num_attention_heads Number of attention heads (16)
+ * @param num_key_value_heads Number of KV heads (8)
+ * @param head_dim Head dimension (128)
+ * @param rms_norm_eps RMS norm epsilon (1e-6)
+ * @param input_layernorm_weight Input layer norm weight
+ * @param qkv_projs Combined QKV projection weights
+ * @param o_proj Output projection weight
+ * @param q_norm_weight Q normalization weight
+ * @param k_norm_weight K normalization weight
+ * @param post_attention_layernorm_weight Post attention layer norm weight
+ * @param gate_mlp MLP gate projection weight
+ * @param up_mlp MLP up projection weight
+ * @param down_mlp MLP down projection weight
+ * @param cos RoPE cosine values
+ * @param sin RoPE sine values
+ * @return Output tensor [batch, seq_len, hidden_size]
+ */
+Tensor qwen3_decoder_layer_with_cache(
+    const Tensor& hidden_states,
+    KVCache* kv_cache,
+    size_t layer_idx,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin
+);
+
+/**
+ * @brief Qwen3 forward pass with KV cache support
+ *
+ * @param input_ids Input token IDs [batch_size, seq_len]
+ * @param kv_cache KV cache (nullptr for prefilled phase)
+ * @param token_embedding Word embedding weight
+ * @param layers List of decoder layer weights
+ * @param norm_weight Final layer norm weight
+ * @param num_layers Number of layers (28)
+ * @param num_attention_heads Number of attention heads (16)
+ * @param num_key_value_heads Number of KV heads (8)
+ * @param head_dim Head dimension (128)
+ * @param rms_norm_eps RMS norm epsilon (1e-6)
+ * @return Hidden states [batch_size, seq_len, hidden_size]
+ */
+Tensor qwen3_forward_with_cache(
+    const TensorL& input_ids,
+    KVCache* kv_cache,
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,

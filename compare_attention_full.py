@@ -87,40 +87,37 @@ def test_pytorch_sdpa(seq_len: int, hidden_dim: int, warmup: int, repeat: int) -
 # ============================================================================
 
 def compile_cpp_executables():
-    """编译C++可执行文件"""
-    attention_dir = Path("./attention")
+    """编译C++可执行文件（使用compile_attention.sh脚本）"""
+    script_path = Path("./scripts/compile_attention.sh")
 
-    if not attention_dir.exists():
-        print("✗ 错误: attention目录不存在")
+    if not script_path.exists():
+        print("✗ 错误: compile_attention.sh脚本不存在")
+        print("  请确保在项目根目录运行此脚本")
         return False
 
-    print("检查C++可执行文件...")
+    print("检查并编译C++可执行文件...")
 
-    executables = [
-        ("test_naive", "test_naive.cpp", "naive_serial.cpp", ""),
-        ("test_naive_omp", "test_naive_omp.cpp", "naive_omp.cpp", "-fopenmp"),
-        ("test_streaming", "test_streaming.cpp", "streaming_serial.cpp", ""),
-        ("test_streaming_omp", "test_streaming_omp.cpp", "streaming_omp.cpp streaming_serial.cpp", "-fopenmp"),
-    ]
+    result = subprocess.run(
+        ["bash", str(script_path)],
+        capture_output=True,
+        text=True
+    )
 
-    for exe_name, test_file, impl_files, flags in executables:
-        if not (attention_dir / exe_name).exists():
-            print(f"  编译{exe_name}...")
-            compile_cmd = f"""
-            cd attention && \
-            g++ -std=c++17 -O3 -march=native {flags} -I. \
-                {test_file} {impl_files} \
-                -o {exe_name}
-            """
-            result = subprocess.run(compile_cmd, shell=True, capture_output=True)
-            if result.returncode != 0:
-                print(f"  ✗ 编译失败: {result.stderr.decode()}")
-                return False
-            print(f"  ✓ {exe_name}编译成功")
-        else:
-            print(f"  ✓ {exe_name}已存在")
+    if result.returncode != 0:
+        print("✗ 编译失败:")
+        print(result.stderr)
+        return False
 
-    print("✓ 所有可执行文件就绪\n")
+    # 显示编译输出（去掉颜色代码以保持整洁）
+    for line in result.stdout.split('\n'):
+        if line.strip():
+            # 移除ANSI颜色代码
+            clean_line = line
+            clean_line = clean_line.replace('\033[0;31m', '').replace('\033[0;32m', '')
+            clean_line = clean_line.replace('\033[0;33m', '').replace('\033[0;34m', '')
+            clean_line = clean_line.replace('\033[0m', '')
+            print(clean_line)
+
     return True
 
 

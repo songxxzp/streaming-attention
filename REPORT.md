@@ -14,7 +14,7 @@
 
 （3）MPI多机并行通过增加聚合内存带宽实现了接近线性的扩展性。实验结果验证了：对于CPU上的memory-bound Attention工作负载，算法级并行设计和聚合带宽扩展比底层算子优化更为关键。
 
-此外，我们将streaming attention实现到了Qwen3-0.6B的推理中，详见tensor_cpp目录：tensor_cpp/README.md。
+此外，我们将streaming attention实现到了Qwen3-0.6B的推理中，详见tensor_cpp目录tensor_cpp/README.md。
 
 **关键词**：Attention机制、Streaming Attention、Online Softmax、内存带宽、MPI、OpenMP、Memory-Bound Optimization
 

@@ -110,6 +110,12 @@ target_link_libraries(test_qwen3_mpi_simple PRIVATE tensor_cpp MPI::MPI_CXX Open
 add_executable(test_weights_broadcast tests/test_weights_broadcast.cpp)
 target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
+add_executable(profile_avx2 tests/profile_avx2.cpp)
+target_link_libraries(profile_avx2 PRIVATE tensor_cpp)
+
+add_executable(simple_avx2_profile tests/simple_avx2_profile.cpp)
+target_link_libraries(simple_avx2_profile PRIVATE)
+
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)
 target_link_libraries(basic_usage PRIVATE tensor_cpp)

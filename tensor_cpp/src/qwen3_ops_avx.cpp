@@ -58,12 +58,17 @@ Tensor qwen3_mlp_avx(
                     sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
                 }
 
-                // Horizontal sum
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                float temp[8];
-                _mm256_storeu_ps(temp, sum_vec);
-                sum = temp[0] + temp[4];
+                // Improved horizontal sum using shuffle (faster than hadd)
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
 
                 // Handle remaining elements
                 for (; j < hidden_size; ++j) {
@@ -100,11 +105,17 @@ Tensor qwen3_mlp_avx(
                     sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
                 }
 
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                float temp[8];
-                _mm256_storeu_ps(temp, sum_vec);
-                sum = temp[0] + temp[4];
+                // Improved horizontal sum
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
 
                 for (; j < hidden_size; ++j) {
                     sum += hidden_states[input_offset + j] * up_proj[weight_offset + j];
@@ -173,11 +184,17 @@ Tensor qwen3_mlp_avx(
                     sum_vec = _mm256_fmadd_ps(swiglu_vec, weight_vec, sum_vec);
                 }
 
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                sum_vec = _mm256_hadd_ps(sum_vec, sum_vec);
-                float temp[8];
-                _mm256_storeu_ps(temp, sum_vec);
-                sum = temp[0] + temp[4];
+                // Improved horizontal sum
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
 
                 for (; j < intermediate_size; ++j) {
                     sum += swiglu[input_offset + j] * down_proj[weight_offset + j];

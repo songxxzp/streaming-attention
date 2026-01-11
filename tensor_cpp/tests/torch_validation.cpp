@@ -20,6 +20,9 @@
 #include <string>
 #include <cstring>
 
+using namespace tensor_cpp;
+using namespace tensor_cpp::ops;
+
 // Simple JSON parser (minimal implementation for test metadata)
 struct TestMetadata {
     std::string name;
@@ -301,7 +304,7 @@ void run_argmax_test(const std::string& test_name, const std::string& data_dir) 
 
     TensorF x(x_data, Shape({2, static_cast<long>(x_data.size() / 2)}));
 
-    Tensor<long> output = tensor_cpp::ops::argmax(x, -1, false);
+    TensorL output = tensor_cpp::ops::argmax(x, -1, false);
 
     save_npy_int64(data_dir + "/cpp_" + test_name + "_output.npy",
                    output.data(), output.size(),

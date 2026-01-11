@@ -250,7 +250,12 @@ Qwen3Weights load_qwen3_weights(const std::string& path) {
         layer.down_proj = load_tensor_from_file(
             file, header_json, "model.layers." + std::to_string(i) + ".mlp.down_proj.weight", header_len);
 
-        // Combine QKV projections into a single tensor for convenience
+        // Save separated QKV projections (for optimized access without re-extraction)
+        layer.q_proj = q_proj;  // Already loaded above
+        layer.k_proj = k_proj;  // Already loaded above
+        layer.v_proj = v_proj;  // Already loaded above
+
+        // Also keep combined qkv_projs for backward compatibility
         // q_proj: [q_out, hidden], k_proj: [k_out, hidden], v_proj: [v_out, hidden]
         // qkv: [q_out + k_out + v_out, hidden]
         size_t q_out = q_proj.shape()[0];

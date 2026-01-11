@@ -29,6 +29,9 @@ namespace qwen3 {
 struct Qwen3LayerWeights {
     // Attention weights
     Tensor qkv_projs;      // Combined QKV projection [hidden_size, 3 * num_heads * head_dim]
+    Tensor q_proj;         // Separated Q projection [q_dim, hidden_size]
+    Tensor k_proj;         // Separated K projection [kv_dim, hidden_size]
+    Tensor v_proj;         // Separated V projection [kv_dim, hidden_size]
     Tensor o_proj;         // Output projection [hidden_size, hidden_size]
 
     // QKNorm weights (Qwen3-specific: normalize Q and K per-head)

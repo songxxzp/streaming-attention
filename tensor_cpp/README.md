@@ -5,7 +5,8 @@
 ## 特性
 
 - ✅ **Qwen3-0.6B 模型完整实现**: 28层Transformer架构
-- ✅ **KV Cache 支持**: 大幅提升decode阶段性能
+- ✅ **KV Cache 支持**: 大幅提升decode阶段性能（1.74x加速比）
+- ✅ **正确的实现**: 已修复self_attention索引和causal mask问题，输出完全正确
 - ✅ **OpenMP 并行**: 多线程加速
 - ✅ **Safetensors 格式**: 支持HuggingFace模型权重
 
@@ -206,7 +207,7 @@ KV cache initialized!
 Generating 12 tokens...
 
 Phase: PREFILL (processing initial prompt)
-  Prefill time: 907 ms
+  Prefill time: 747 ms
   Tokens processed: 9
   First predicted token: 151667 (logit=28.464)
   Cache initialized: 9 tokens
@@ -214,17 +215,21 @@ Phase: PREFILL (processing initial prompt)
 Phase: DECODE (generating tokens one by one)
   With KV cache, each step only processes 1 new token!
 
-Step  2: token=  3553  logit=13.47  time= 608 ms  (cached_tokens=10)
-Step  3: token= 75965  logit=13.16  time= 599 ms  (cached_tokens=11)
-Step  4: token=  3342  logit=12.15  time= 591 ms  (cached_tokens=12)
+Step  2: token=   198  logit=31.82  time= 540 ms  (cached_tokens=10)
+Step  3: token= 32313  logit=21.70  time= 545 ms  (cached_tokens=11)
+Step  4: token=    11  logit=25.31  time= 554 ms  (cached_tokens=12)
+Step  5: token=   279  logit=24.47  time= 541 ms  (cached_tokens=13)
 ...
 
 Generation Summary:
-  Total time: 6992 ms
+  Total time: 6610 ms
   Tokens generated: 11
-  Average time per token: 635 ms
-  Tokens per second: 1.57
+  Average time per token: 600 ms
+  Tokens per second: 1.66
   Final cache size: 20 tokens
+
+Decoding output:
+OUTPUT: 'user\nHello\nassistant\n\nOkay, the user said "Hello" and I'
 ```
 
 **性能对比**:
@@ -441,17 +446,17 @@ pip install transformers safetensors
 ### 实测性能
 
 **Prefill阶段** (9 tokens):
-- 时间: 907 ms
-- 吞吐量: 9.9 tokens/s
+- 时间: 747 ms
+- 吞吐量: 12.0 tokens/s
 
 **Decode阶段** (with KV Cache):
-- 平均时间/token: 635 ms
-- 吞吐量: 1.57 tokens/s
-- 加速比: 1.8x (相比不用cache)
+- 平均时间/token: 600 ms
+- 吞吐量: 1.66 tokens/s
+- 加速比: 1.74x (相比不用cache)
 
 **对比: 不用KV Cache**:
-- 平均时间/token: 1053 ms
-- 吞吐量: 0.95 tokens/s
+- 平均时间/token: 1041 ms
+- 吞吐量: 0.96 tokens/s
 
 ### 性能瓶颈分析
 
@@ -530,7 +535,54 @@ cpp_logits = np.fromfile("/tmp/cpp_logits.bin", dtype=np.float32)
 
 ---
 
+## 技术实现说明
+
+### KV Cache 实现细节
+
+本项目正确实现了 KV Cache 优化，修复了两个关键 bug：
+
+**Bug 1: self_attention 中的索引错误**
+- **问题**: 当使用 KV cache 时，query seq_len = 1（新 token），但 key seq_len = total_seq_len（缓存+新）
+- **原因**: 代码错误地使用 query 的 seq_len 计算 key 的索引
+- **修复**: 分别使用 `q_seq_len` 和 `k_seq_len` 计算索引
+- **影响**: 导致访问错误的内存位置，生成乱码
+
+**Bug 2: Decode 阶段的 causal mask 不正确**
+- **问题**: Decode 阶段单个 query 在序列末尾，应能看到所有之前 token
+- **原因**: 使用了为 prefill 设计的 causal mask
+- **修复**: 为 decode 和 prefill 分别创建正确的 mask
+- **影响**: 导致 attention 计算错误
+
+**验证**: 不用 KV Cache 和用 KV Cache 生成完全一致的输出
+
+### 实现细节
+
+**Prefill 阶段**（处理初始 prompt）:
+```cpp
+// 输入: [batch, seq_len] 例如 [1, 9]
+// 输出: 处理所有 token，初始化 cache
+Tensor output = qwen3_forward_with_cache(input, kv_cache, ...);
+// cache->current_seq_len = 9
+```
+
+**Decode 阶段**（逐个生成）:
+```cpp
+// 每次只处理 1 个新 token
+Tensor new_input = {last_token};  // [1, 1]
+Tensor output = qwen3_forward_with_cache(new_input, kv_cache, ...);
+// cache 自动更新，包含之前的 9 个 + 新的 1 个 = 10 个 token
+```
+
+---
+
 ## 开发计划
+
+### 已完成 ✅
+- [x] Qwen3-0.6B 模型完整实现
+- [x] KV Cache 优化（1.74x 加速）
+- [x] 修复 self_attention 索引 bug
+- [x] 修复 causal mask bug
+- [x] 验证与无 cache 版本输出一致
 
 ### 短期
 - [ ] 添加温度采样
@@ -540,7 +592,7 @@ cpp_logits = np.fromfile("/tmp/cpp_logits.bin", dtype=np.float32)
 ### 中期
 - [ ] 使用BLAS库优化矩阵乘法
 - [ ] 添加INT8量化支持
-- [ ] 优化KV Cache内存布局
+- [ ] 进一步优化 KV Cache 内存布局
 
 ### 长期
 - [ ] 支持更多模型（Llama, Mistral等）

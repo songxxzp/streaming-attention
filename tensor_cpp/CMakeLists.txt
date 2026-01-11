@@ -10,6 +10,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
 
+# Define MPI_VERSION since it's not automatically defined by CMake
+if(MPI_CXX_FOUND)
+    add_definitions(-DMPI_VERSION=3)
+endif()
+
 # Compilation flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
@@ -23,6 +28,9 @@ set(TENSOR_SOURCES
     src/ops.cpp
     src/qwen3_ops.cpp
     src/qwen3_loader.cpp
+    src/ops_mpi.cpp
+    src/qwen3_ops_mpi.cpp
+    src/ops_avx.cpp
 )
 
 # Build tensor library
@@ -71,6 +79,12 @@ target_link_libraries(benchmark_qwen3 PRIVATE tensor_cpp)
 
 add_executable(test_mpi_simple tests/test_mpi_simple.cpp)
 target_link_libraries(test_mpi_simple PRIVATE MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_mpi_ops tests/test_mpi_ops.cpp)
+target_link_libraries(test_mpi_ops PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_avx_ops tests/test_avx_ops.cpp)
+target_link_libraries(test_avx_ops PRIVATE tensor_cpp)
 
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)

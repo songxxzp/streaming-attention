@@ -101,6 +101,15 @@ target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX O
 add_executable(benchmark_qwen3_decode_versions tests/benchmark_qwen3_decode_versions.cpp)
 target_link_libraries(benchmark_qwen3_decode_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
+add_executable(test_mpi_linear_debug tests/test_mpi_linear_debug.cpp)
+target_link_libraries(test_mpi_linear_debug PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_qwen3_mpi_simple tests/test_qwen3_mpi_simple.cpp)
+target_link_libraries(test_qwen3_mpi_simple PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_weights_broadcast tests/test_weights_broadcast.cpp)
+target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)
 target_link_libraries(basic_usage PRIVATE tensor_cpp)

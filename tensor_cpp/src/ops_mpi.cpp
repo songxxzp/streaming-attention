@@ -454,8 +454,6 @@ Tensor linear_mpi_omp(
     size_t in_features = input.shape()[1];
     size_t out_features = weight.shape()[0];
 
-    std::vector<float> result(seq_len * out_features);
-
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
@@ -465,6 +463,9 @@ Tensor linear_mpi_omp(
     int start_out = rank * out_per_rank;
     int end_out = std::min(start_out + out_per_rank, static_cast<int>(out_features));
     int local_out = end_out - start_out;
+
+    // FIX: Allocate only local result size, not full size!
+    std::vector<float> result(seq_len * local_out);
 
     // Local computation
     #pragma omp parallel for if(seq_len * local_out > 100)
@@ -523,8 +524,6 @@ Tensor embedding_mpi_omp(
     size_t seq_len = indices.shape()[1];
     size_t hidden_size = weight.shape()[1];
 
-    std::vector<float> result(batch_size * seq_len * hidden_size);
-
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
@@ -534,6 +533,9 @@ Tensor embedding_mpi_omp(
     int start_seq = rank * seq_per_rank;
     int end_seq = std::min(start_seq + seq_per_rank, static_cast<int>(seq_len));
     int local_seq = end_seq - start_seq;
+
+    // FIX: Allocate only local result size, not full size!
+    std::vector<float> result(batch_size * local_seq * hidden_size);
 
     // Local computation
     #pragma omp parallel for if(batch_size * local_seq > 10)

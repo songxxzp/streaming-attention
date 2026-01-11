@@ -146,11 +146,10 @@ int main(int argc, char** argv) {
             std::cout << "Loading model from: " << model_path << "\n";
         }
 
-        // Load weights (only rank 0 loads, then broadcast)
-        Qwen3Weights weights;
-        if (rank == 0) {
-            weights = load_qwen3_weights(model_path);
-        }
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        // Load weights (all ranks need to load independently for MPI version)
+        Qwen3Weights weights = load_qwen3_weights(model_path);
 
         MPI_Barrier(MPI_COMM_WORLD);
 

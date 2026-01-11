@@ -169,16 +169,31 @@ def test_cpp_attention(seq_len: int, hidden_dim: int, block_size: int,
 
 def test_cpp_mpi_attention(seq_len: int, hidden_dim: int, block_size: int,
                            mpi_ranks: int, omp_threads: int,
-                           executable: str, mpirun: str, repeat: int) -> Tuple[float, bool]:
-    """测试C++ MPI Attention性能"""
+                           executable: str, mpirun: str, repeat: int,
+                           needs_block_size: bool = True) -> Tuple[float, bool]:
+    """测试C++ MPI Attention性能
+
+    Args:
+        needs_block_size: True for streaming MPI, False for naive MPI
+    """
     try:
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(omp_threads)
 
         times = []
         for run in range(repeat):
+            # 根据类型构建命令行参数
+            if needs_block_size:
+                # Streaming MPI: <T_global> <d> <block_size> <num_omp_threads>
+                cmd = [mpirun, "-np", str(mpi_ranks), executable,
+                       str(seq_len), str(hidden_dim), str(block_size), str(omp_threads)]
+            else:
+                # Naive MPI: <T_global> <d> <num_omp_threads>
+                cmd = [mpirun, "-np", str(mpi_ranks), executable,
+                       str(seq_len), str(hidden_dim), str(omp_threads)]
+
             result = subprocess.run(
-                [mpirun, "-np", str(mpi_ranks), executable, str(seq_len), str(hidden_dim), str(block_size), str(omp_threads)],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -502,49 +517,52 @@ def run_comparison(args):
     print()
 
     # ============================================================================
-    # 测试3: Streaming OpenMP扩展性 (包含PyTorch对比)
+    # 测试3: Streaming OpenMP扩展性 (包含PyTorch对比, 测试不同block_size)
     # ============================================================================
     print("=" * 100)
-    print(f"  测试3: Streaming Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比)")
+    print(f"  测试3: Streaming Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比, 测试不同block_size)")
     print("=" * 100)
     print()
 
-    print("实现方式           | 线程数 | 时间(ms) | 吞吐量(tokens/s) | 相对Baseline加速 | 相对串行加速 | 效率")
-    print("-------------------|--------|---------|-----------------|----------------|-------------|------")
+    print("实现方式           | 线程数 | Block Size | 时间 | 吞吐量 | 相对Baseline加速 | 相对串行加速 | 效率")
+    print("-------------------|--------|------------|---------|-----------------|----------------|-------------|------")
 
     # PyTorch baseline (已在测试2中获取)
-
     if baseline_time and args.baseline == "torch" and HAS_TORCH:
         baseline_throughput = args.seqlen_scale * 1000 / baseline_time
-        print(f"{'PyTorch SDPA':19s} |   {'N/A':3s} | {baseline_time:7.4f} | {baseline_throughput:15.2f} | "
+        print(f"{'PyTorch SDPA':19s} |   {'N/A':3s} |     {'N/A':8s} | {baseline_time:7.4f} | {baseline_throughput:15.2f} | "
               f"{'  1.00':14s} | {'  N/A':11s} |  N/A")
 
-    # 获取C++ Streaming串行baseline
-    streaming_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, args.repeat)
+    # 对每个block_size测试streaming attention
+    for block_size in args.block_sizes:
+        # 获取C++ Streaming串行baseline (只对第一个block_size测试)
+        if block_size == args.block_sizes[0]:
+            streaming_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, args.repeat)
+            if streaming_baseline_time > 0:
+                streaming_baseline_throughput = args.seqlen_scale * 1000 / streaming_baseline_time
+                if baseline_time and args.baseline == "torch":
+                    speedup_vs_baseline = baseline_time / streaming_baseline_time
+                    print(f"{'Streaming Serial':19s} |     {1:3d}   | {block_size:10d} | {streaming_baseline_time:7.4f} | {streaming_baseline_throughput:15.2f} | "
+                          f"{speedup_vs_baseline:14.2f}x | {1.00:11.2f}x | 1.000")
+                else:
+                    print(f"{'Streaming Serial':19s} |     {1:3d}   | {block_size:10d} | {streaming_baseline_time:7.4f} | {streaming_baseline_throughput:15.2f} | "
+                          f"{'  N/A':14s} | {1.00:11.2f}x | 1.000")
 
-    if streaming_baseline_time > 0:
-        streaming_baseline_throughput = args.seqlen_scale * 1000 / streaming_baseline_time
-        if baseline_time and args.baseline == "torch":
-            speedup_vs_baseline = baseline_time / streaming_baseline_time
-            print(f"{'Streaming Serial':19s} |     {1:3d}   | {streaming_baseline_time:7.4f} | {streaming_baseline_throughput:15.2f} | "
-                  f"{speedup_vs_baseline:14.2f}x | {1.00:11.2f}x | 1.000")
-        else:
-            print(f"{'Streaming Serial':19s} |     {1:3d}   | {streaming_baseline_time:7.4f} | {streaming_baseline_throughput:15.2f} | "
-                  f"{'  N/A':14s} | {1.00:11.2f}x | 1.000")
-
+        # 对每个线程数测试
         for threads in args.threads[1:]:
             time, success = test_cpp_attention(args.seqlen_scale, args.dim, block_size, threads, args.cpp_streaming_omp, args.repeat)
             if success:
                 throughput = args.seqlen_scale * 1000 / time
+                # 相对于串行baseline的加速比
                 speedup_vs_serial = streaming_baseline_time / time
                 efficiency = speedup_vs_serial / threads
 
                 if baseline_time and args.baseline == "torch":
                     speedup_vs_baseline = baseline_time / time
-                    print(f"{'Streaming OpenMP':19s} |    {threads:3d}   | {time:7.4f} | {throughput:15.2f} | "
+                    print(f"{'Streaming OpenMP':19s} |    {threads:3d}   | {block_size:10d} | {time:7.4f} | {throughput:15.2f} | "
                           f"{speedup_vs_baseline:14.2f}x | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
                 else:
-                    print(f"{'Streaming OpenMP':19s} |    {threads:3d}   | {time:7.4f} | {throughput:15.2f} | "
+                    print(f"{'Streaming OpenMP':19s} |    {threads:3d}   | {block_size:10d} | {time:7.4f} | {throughput:15.2f} | "
                           f"{'  N/A':14s} | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
 
     print()
@@ -577,7 +595,8 @@ def run_comparison(args):
                     time, success = test_cpp_mpi_attention(
                         args.seqlen_scale, args.dim, block_size,
                         mpi_ranks, omp_threads,
-                        args.cpp_naive_mpi, args.mpirun, 1
+                        args.cpp_naive_mpi, args.mpirun, 1,
+                        needs_block_size=False  # Naive MPI不需要block_size
                     )
                     if success:
                         throughput = args.seqlen_scale * 1000 / time
@@ -589,37 +608,42 @@ def run_comparison(args):
         print()
 
         # ============================================================================
-        # 测试5: Streaming MPI扩展性
+        # 测试5: Streaming MPI扩展性 (测试不同block_size)
         # ============================================================================
         print("=" * 100)
-        print(f"  测试5: Streaming Attention MPI扩展性 (seq_len={args.seqlen_scale})")
+        print(f"  测试5: Streaming Attention MPI扩展性 (seq_len={args.seqlen_scale}, 测试不同block_size)")
         print("=" * 100)
         print()
 
-        print("MPI配置            | MPI Ranks | OMP/Rank | 时间 | 吞吐量 | 相对串行加速 | 效率")
-        print("-------------------|-----------|----------|---------|-----------------|-------------|------")
+        print("MPI配置            | MPI Ranks | OMP/Rank | Block Size | 时间 | 吞吐量 | 相对串行加速 | 效率")
+        print("-------------------|-----------|----------|------------|---------|-----------------|-------------|------")
 
-        # 获取串行baseline
-        streaming_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, 1)
+        # 对每个block_size测试streaming MPI
+        for block_size in args.block_sizes:
+            # 获取串行baseline (只对第一个block_size测试)
+            if block_size == args.block_sizes[0]:
+                streaming_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, 1)
 
-        if streaming_serial_time > 0:
-            streaming_serial_throughput = args.seqlen_scale * 1000 / streaming_serial_time
-            print(f"{'Streaming Serial':19s} |     {1:3d}   |    {1:4d}  | {streaming_serial_time:7.4f} | {streaming_serial_throughput:15.2f} | {1.00:11.2f}x | 1.000")
+            if streaming_serial_time > 0:
+                # 只对第一个block_size显示串行baseline
+                if block_size == args.block_sizes[0]:
+                    streaming_serial_throughput = args.seqlen_scale * 1000 / streaming_serial_time
+                    print(f"{'Streaming Serial':19s} |     {1:3d}   |    {1:4d}  | {block_size:10d} | {streaming_serial_time:7.4f} | {streaming_serial_throughput:15.2f} | {1.00:11.2f}x | 1.000")
 
-            # 测试不同的MPI ranks × OMP threads组合
-            for mpi_ranks in args.mpi_ranks:
-                for omp_threads in args.mpi_omp_threads:
-                    time, success = test_cpp_mpi_attention(
-                        args.seqlen_scale, args.dim, block_size,
-                        mpi_ranks, omp_threads,
-                        args.cpp_streaming_mpi, args.mpirun, 1
-                    )
-                    if success:
-                        throughput = args.seqlen_scale * 1000 / time
-                        total_threads = mpi_ranks * omp_threads
-                        speedup_vs_serial = streaming_serial_time / time
-                        efficiency = speedup_vs_serial / total_threads
-                        print(f"{'Streaming MPI+OMP':19s} |    {mpi_ranks:3d}   |   {omp_threads:4d}  | {time:7.4f} | {throughput:15.2f} | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
+                # 测试不同的MPI ranks × OMP threads组合
+                for mpi_ranks in args.mpi_ranks:
+                    for omp_threads in args.mpi_omp_threads:
+                        time, success = test_cpp_mpi_attention(
+                            args.seqlen_scale, args.dim, block_size,
+                            mpi_ranks, omp_threads,
+                            args.cpp_streaming_mpi, args.mpirun, 1
+                        )
+                        if success:
+                            throughput = args.seqlen_scale * 1000 / time
+                            total_threads = mpi_ranks * omp_threads
+                            speedup_vs_serial = streaming_serial_time / time
+                            efficiency = speedup_vs_serial / total_threads
+                            print(f"{'Streaming MPI+OMP':19s} |    {mpi_ranks:3d}   |   {omp_threads:4d}  | {block_size:10d} | {time:7.4f} | {throughput:15.2f} | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
 
         print()
 

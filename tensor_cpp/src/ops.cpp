@@ -437,6 +437,41 @@ Tensor self_attention(
         }
     }
 
+    // Apply mask if provided (CRITICAL: must be done before softmax!)
+    if (mask != nullptr) {
+        const Shape& mask_shape = mask->shape();
+        // mask shape should be [1, 1, seq_len, seq_len] or [seq_len, seq_len]
+        if (mask_shape.ndim() == 4) {
+            // mask: [1, 1, seq_len, seq_len]
+            #pragma omp parallel for if(batch_size * num_heads * seq_len * seq_len > 1000)
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t h = 0; h < num_heads; ++h) {
+                    for (size_t i = 0; i < seq_len; ++i) {
+                        for (size_t j = 0; j < seq_len; ++j) {
+                            size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                            size_t mask_idx = i * seq_len + j;  // mask[0, 0, i, j]
+                            scores[score_idx] += (*mask)[mask_idx];
+                        }
+                    }
+                }
+            }
+        } else if (mask_shape.ndim() == 2) {
+            // mask: [seq_len, seq_len]
+            #pragma omp parallel for if(batch_size * num_heads * seq_len * seq_len > 1000)
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t h = 0; h < num_heads; ++h) {
+                    for (size_t i = 0; i < seq_len; ++i) {
+                        for (size_t j = 0; j < seq_len; ++j) {
+                            size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                            size_t mask_idx = i * seq_len + j;
+                            scores[score_idx] += (*mask)[mask_idx];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Apply softmax
     std::vector<float> attn_weights(batch_size * num_heads * seq_len * seq_len);
 

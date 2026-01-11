@@ -35,7 +35,7 @@ DEFAULT_SEQ_LENS = [512, 1024, 2048, 4096, 8192]
 DEFAULT_HIDDEN_DIM = 128
 DEFAULT_WARMUP_RUNS = 2
 DEFAULT_TEST_RUNS = 10
-DEFAULT_BLOCK_SIZE = 64
+DEFAULT_BLOCK_SIZES = [32, 64, 128]
 DEFAULT_THREADS_LIST = [1, 2, 4, 8, 16]
 DEFAULT_SEQ_LEN_SCALABILITY = 8192
 DEFAULT_BASELINE = "torch"
@@ -258,10 +258,11 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--block-size",
+        "--block-sizes",
         type=int,
-        default=DEFAULT_BLOCK_SIZE,
-        help=f"Streaming block size (默认: {DEFAULT_BLOCK_SIZE})"
+        nargs="+",
+        default=DEFAULT_BLOCK_SIZES,
+        help=f"Streaming block size列表 (默认: {DEFAULT_BLOCK_SIZES})"
     )
 
     parser.add_argument(
@@ -369,7 +370,7 @@ def run_comparison(args):
     print(f"  隐藏维度: {args.dim}")
     print(f"  预热次数: {args.warmup}")
     print(f"  测试次数: {args.repeat}")
-    print(f"  Block Size: {args.block_size}")
+    print(f"  Block Sizes: {args.block_sizes}")
     print(f"  OpenMP线程: {args.threads}")
     print(f"  扩展性测试序列长度: {args.seqlen_scale}")
     print(f"  Baseline: {args.baseline}")
@@ -395,8 +396,8 @@ def run_comparison(args):
     print("=" * 100)
     print()
 
-    print("序列长度 | PyTorch(ms) | Naive(ms) | Streaming(ms) | PT-吞吐 | Naive-吞吐 | Streaming-吞吐")
-    print("---------|------------|-----------|---------------|---------|-----------|--------------")
+    print("序列长度 | Block Size | PyTorch(ms) | Naive(ms) | Streaming(ms) | PT-吞吐 | Naive-吞吐 | Streaming-吞吐")
+    print("---------|------------|------------|-----------|---------------|---------|-----------|--------------")
 
     for seq_len in args.seqlen:
         # PyTorch SDPA
@@ -411,28 +412,34 @@ def run_comparison(args):
             print(f"  ✗ 跳过序列长度 {seq_len} (PyTorch未安装)")
             continue
 
-        # C++ Naive Serial
-        naive_time, naive_success = test_cpp_attention(seq_len, args.dim, args.block_size, 1, args.cpp_naive_serial, args.repeat)
+        # 对每个block_size测试streaming
+        for block_size in args.block_sizes:
+            # C++ Naive Serial (naive不需要block_size，只测试一次)
+            if block_size == args.block_sizes[0]:
+                naive_time, naive_success = test_cpp_attention(seq_len, args.dim, block_size, 1, args.cpp_naive_serial, args.repeat)
+            else:
+                # 后续block_size复用naive结果
+                pass
 
-        # C++ Streaming Serial
-        streaming_time, streaming_success = test_cpp_attention(seq_len, args.dim, args.block_size, 1, args.cpp_streaming_serial, args.repeat)
+            # C++ Streaming Serial
+            streaming_time, streaming_success = test_cpp_attention(seq_len, args.dim, block_size, 1, args.cpp_streaming_serial, args.repeat)
 
-        if naive_success and streaming_success:
-            naive_throughput = seq_len * 1000 / naive_time
-            streaming_throughput = seq_len * 1000 / streaming_time
-            print(f"{seq_len:8d} | {pytorch_time:11.4f} | {naive_time:10.4f} | {streaming_time:14.4f} | "
-                  f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} | {streaming_throughput:13.2f}")
-        elif naive_success:
-            naive_throughput = seq_len * 1000 / naive_time
-            print(f"{seq_len:8d} | {pytorch_time:11.4f} | {naive_time:10.4f} |      N/A       | "
-                  f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} |      N/A      ")
-        elif streaming_success:
-            streaming_throughput = seq_len * 1000 / streaming_time
-            print(f"{seq_len:8d} | {pytorch_time:11.4f} |     N/A    | {streaming_time:14.4f} | "
-                  f"{pytorch_throughput:8.2f} |     N/A    | {streaming_throughput:13.2f}")
-        else:
-            print(f"{seq_len:8d} | {pytorch_time:11.4f} |     N/A    |      N/A       | "
-                  f"{pytorch_throughput:8.2f} |     N/A    |      N/A      ")
+            if naive_success and streaming_success:
+                naive_throughput = seq_len * 1000 / naive_time
+                streaming_throughput = seq_len * 1000 / streaming_time
+                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} | {streaming_time:14.4f} | "
+                      f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} | {streaming_throughput:13.2f}")
+            elif naive_success:
+                naive_throughput = seq_len * 1000 / naive_time
+                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} |      N/A       | "
+                      f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} |      N/A      ")
+            elif streaming_success:
+                streaming_throughput = seq_len * 1000 / streaming_time
+                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    | {streaming_time:14.4f} | "
+                      f"{pytorch_throughput:8.2f} |     N/A    | {streaming_throughput:13.2f}")
+            else:
+                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    |      N/A       | "
+                      f"{pytorch_throughput:8.2f} |     N/A    |      N/A      ")
 
     print()
 
@@ -446,6 +453,9 @@ def run_comparison(args):
 
     print("实现方式       | 线程数 | 时间(ms) | 吞吐量(tokens/s) | 相对Baseline加速 | 相对串行加速 | 效率")
     print("---------------|--------|---------|-----------------|----------------|-------------|------")
+
+    # 使用第一个block_size
+    block_size = args.block_sizes[0]
 
     # 根据baseline选择获取哪个baseline时间
     baseline_time = None
@@ -462,7 +472,7 @@ def run_comparison(args):
             print(f"  ✗ PyTorch测试失败: {e}")
 
     # 获取C++ Naive串行baseline
-    naive_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_naive_serial, args.repeat)
+    naive_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_naive_serial, args.repeat)
 
     if naive_baseline_time > 0:
         naive_baseline_throughput = args.seqlen_scale * 1000 / naive_baseline_time
@@ -475,7 +485,7 @@ def run_comparison(args):
                   f"{'  N/A':14s} | {1.00:11.2f}x | 1.000")
 
         for threads in args.threads[1:]:
-            time, success = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, threads, args.cpp_naive_omp, args.repeat)
+            time, success = test_cpp_attention(args.seqlen_scale, args.dim, block_size, threads, args.cpp_naive_omp, args.repeat)
             if success:
                 throughput = args.seqlen_scale * 1000 / time
                 speedup_vs_serial = naive_baseline_time / time
@@ -510,7 +520,7 @@ def run_comparison(args):
               f"{'  1.00':14s} | {'  N/A':11s} |  N/A")
 
     # 获取C++ Streaming串行baseline
-    streaming_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_streaming_serial, args.repeat)
+    streaming_baseline_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, args.repeat)
 
     if streaming_baseline_time > 0:
         streaming_baseline_throughput = args.seqlen_scale * 1000 / streaming_baseline_time
@@ -523,7 +533,7 @@ def run_comparison(args):
                   f"{'  N/A':14s} | {1.00:11.2f}x | 1.000")
 
         for threads in args.threads[1:]:
-            time, success = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, threads, args.cpp_streaming_omp, args.repeat)
+            time, success = test_cpp_attention(args.seqlen_scale, args.dim, block_size, threads, args.cpp_streaming_omp, args.repeat)
             if success:
                 throughput = args.seqlen_scale * 1000 / time
                 speedup_vs_serial = streaming_baseline_time / time
@@ -555,7 +565,7 @@ def run_comparison(args):
         print("----------------|-----------|----------|---------|-----------------|-------------|------")
 
         # 获取串行baseline
-        naive_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_naive_serial, 1)
+        naive_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_naive_serial, 1)
 
         if naive_serial_time > 0:
             naive_serial_throughput = args.seqlen_scale * 1000 / naive_serial_time
@@ -565,7 +575,7 @@ def run_comparison(args):
             for mpi_ranks in args.mpi_ranks:
                 for omp_threads in args.mpi_omp_threads:
                     time, success = test_cpp_mpi_attention(
-                        args.seqlen_scale, args.dim, args.block_size,
+                        args.seqlen_scale, args.dim, block_size,
                         mpi_ranks, omp_threads,
                         args.cpp_naive_mpi, args.mpirun, 1
                     )
@@ -590,7 +600,7 @@ def run_comparison(args):
         print("-------------------|-----------|----------|---------|-----------------|-------------|------")
 
         # 获取串行baseline
-        streaming_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_streaming_serial, 1)
+        streaming_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, block_size, 1, args.cpp_streaming_serial, 1)
 
         if streaming_serial_time > 0:
             streaming_serial_throughput = args.seqlen_scale * 1000 / streaming_serial_time
@@ -600,7 +610,7 @@ def run_comparison(args):
             for mpi_ranks in args.mpi_ranks:
                 for omp_threads in args.mpi_omp_threads:
                     time, success = test_cpp_mpi_attention(
-                        args.seqlen_scale, args.dim, args.block_size,
+                        args.seqlen_scale, args.dim, block_size,
                         mpi_ranks, omp_threads,
                         args.cpp_streaming_mpi, args.mpirun, 1
                     )

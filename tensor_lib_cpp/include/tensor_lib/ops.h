@@ -435,6 +435,110 @@ Tensor<T> self_attention(
 }
 
 // ============================================================================
+// Cross Attention
+// ============================================================================
+
+template <typename T>
+Tensor<T> cross_attention(
+    const Tensor<T>& query,      // (batch_size, num_heads, query_len, head_dim)
+    const Tensor<T>& key,        // (batch_size, num_heads, kv_len, head_dim)
+    const Tensor<T>& value,      // (batch_size, num_heads, kv_len, head_dim)
+    const Tensor<T>* mask = nullptr,  // Optional: (query_len, kv_len) or (batch_size, num_heads, query_len, kv_len)
+    float scale = 1.0f
+) {
+    // Cross-attention: softmax(Q @ K^T / sqrt(d)) @ V
+    // Key difference from self-attention: Q and K/V can have different sequence lengths
+
+    size_t batch_size = query.shape()[0];
+    size_t num_heads = query.shape()[1];
+    size_t query_len = query.shape()[2];
+    size_t kv_len = key.shape()[2];
+    size_t head_dim = query.shape()[3];
+
+    // Compute attention scores: Q @ K^T
+    // Output shape: (batch_size, num_heads, query_len, kv_len)
+
+    std::vector<T> scores(batch_size * num_heads * query_len * kv_len);
+
+    #pragma omp parallel for if(batch_size * num_heads * query_len * kv_len > 1000)
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            for (size_t i = 0; i < query_len; ++i) {
+                for (size_t j = 0; j < kv_len; ++j) {
+                    // Dot product of query[i] and key[j]
+                    T sum = static_cast<T>(0);
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        size_t q_idx = ((b * num_heads + h) * query_len + i) * head_dim + d;
+                        size_t k_idx = ((b * num_heads + h) * kv_len + j) * head_dim + d;
+                        sum += query[q_idx] * key[k_idx];
+                    }
+
+                    size_t score_idx = ((b * num_heads + h) * query_len + i) * kv_len + j;
+                    scores[score_idx] = sum * scale;
+                }
+            }
+        }
+    }
+
+    // Apply softmax (numerically stable: exp(x - max(x)) / sum(exp(x - max(x))))
+    std::vector<T> attn_weights(batch_size * num_heads * query_len * kv_len);
+
+    #pragma omp parallel for if(batch_size * num_heads * query_len > 100)
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            for (size_t i = 0; i < query_len; ++i) {
+                // Find max for this row
+                T max_score = -std::numeric_limits<T>::infinity();
+                for (size_t j = 0; j < kv_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * query_len + i) * kv_len + j;
+                    max_score = std::max(max_score, scores[score_idx]);
+                }
+
+                // Compute exp and sum
+                T sum_exp = static_cast<T>(0);
+                for (size_t j = 0; j < kv_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * query_len + i) * kv_len + j;
+                    T exp_val = std::exp(scores[score_idx] - max_score);
+                    attn_weights[score_idx] = exp_val;
+                    sum_exp += exp_val;
+                }
+
+                // Normalize
+                for (size_t j = 0; j < kv_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * query_len + i) * kv_len + j;
+                    attn_weights[score_idx] /= sum_exp;
+                }
+            }
+        }
+    }
+
+    // Compute output: attn_weights @ value
+    // Output shape: (batch_size, num_heads, query_len, head_dim)
+
+    std::vector<T> output(batch_size * num_heads * query_len * head_dim);
+
+    #pragma omp parallel for if(batch_size * num_heads * query_len * head_dim > 1000)
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            for (size_t i = 0; i < query_len; ++i) {
+                for (size_t d = 0; d < head_dim; ++d) {
+                    T sum = static_cast<T>(0);
+                    for (size_t j = 0; j < kv_len; ++j) {
+                        size_t weight_idx = ((b * num_heads + h) * query_len + i) * kv_len + j;
+                        size_t value_idx = ((b * num_heads + h) * kv_len + j) * head_dim + d;
+                        sum += attn_weights[weight_idx] * value[value_idx];
+                    }
+                    size_t out_idx = ((b * num_heads + h) * query_len + i) * head_dim + d;
+                    output[out_idx] = sum;
+                }
+            }
+        }
+    }
+
+    return Tensor<T>(std::move(output), query.shape());
+}
+
+// ============================================================================
 // MPI All-Reduce for distributed training
 // ============================================================================
 

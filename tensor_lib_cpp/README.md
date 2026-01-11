@@ -5,25 +5,38 @@
 ## 特性
 
 - ✅ **PyTorch 风格 API**: 简洁易用的接口设计
-- ✅ **完整算子支持**: Add, Argmax, Embedding, Linear, RMS Norm, RoPE, SwiGLU, Self-Attention
+- ✅ **完整算子支持**: Add, Argmax, Embedding, Linear, RMS Norm, RoPE, SwiGLU, Self/Cross-Attention
 - ✅ **OpenMP 并行**: 自动利用多核 CPU
 - ✅ **MPI 分布式**: 支持多节点训练
 - ✅ **高性能**: 基于 C++17，优化编译
+- ✅ **Header-Only**: 模板库，无需额外编译
 
 ## 目录结构
 
 ```
 tensor_lib_cpp/
-├── include/tensor_lib/
-│   ├── tensor.h      # 核心 Tensor 类
-│   └── ops.h         # 所有算子实现
-├── tests/
-│   └── test_ops.cpp  # 综合测试套件
-├── build/            # 编译输出
-├── results/          # 测试结果
-├── Makefile          # 构建配置
-└── README.md         # 本文件
+├── include/tensor_lib/      # 公共头文件（Header-Only模板库）
+│   ├── tensor.h             # Tensor 类声明
+│   ├── tensor_impl.tpp      # Tensor 模板实现
+│   └── ops.h                # 所有算子实现
+│
+├── tests/                   # 测试套件
+│   ├── test_ops.cpp         # 基础算子测试
+│   └── test_attention.cpp   # Attention专项测试
+│
+├── examples/                # 使用示例
+│   └── basic_usage.cpp      # 完整示例代码
+│
+├── docs/                    # 文档
+│   └── PROJECT_STRUCTURE.md # 项目结构说明
+│
+├── build/                   # 编译输出（自动生成）
+├── results/                 # 测试结果（自动生成）
+├── Makefile                 # 构建配置
+└── README.md                # 本文件
 ```
+
+> **注意**: 这是一个 **Header-Only 模板库**。所有实现都在头文件中，`src/` 目录被删除是因为模板库不需要单独的 `.cpp` 实现文件。
 
 ## 编译
 
@@ -33,14 +46,36 @@ tensor_lib_cpp/
 - OpenMP (通常编译器自带)
 - OpenMPI (可选，用于 MPI 支持)
 
-### 编译命令
+### 快速开始
 
 ```bash
-# 编译 OpenMP 版本
+# 编译所有测试和示例
 make
 
+# 运行基础算子测试
+make run
+
+# 运行 Attention 测试
+make test-attention
+
+# 运行示例
+make run-examples
+
+# 查看所有命令
+make help
+```
+
+### 编译选项
+
+```bash
+# 仅编译 OpenMP 版本
+make build/test_ops
+
 # 编译 MPI 版本
-make test_ops_mpi
+make build/test_ops_mpi
+
+# 编译示例
+make examples
 ```
 
 ## 运行测试
@@ -48,18 +83,31 @@ make test_ops_mpi
 ### 单机测试 (OpenMP)
 
 ```bash
+# 基础算子测试
 make run
+
+# Attention 测试（Self + Cross）
+make test-attention
 ```
 
-### 多节点测试 (MPI)
+### 多节点测试 (MPI + OpenMP)
 
 ```bash
-# 使用 4 个进程
+# 使用 4 个进程运行基础测试
 make run-mpi
+
+# 使用 4 个进程运行 Attention 测试
+make test-attention-mpi
 
 # 自定义进程数
 N=8 make run-mpi-n
 ```
+
+### 测试结果
+
+测试结果保存在 `results/` 目录：
+- `test_results.txt` - 基础算子测试
+- `attention_test_results.txt` - Attention 测试
 
 ## 支持的算子
 
@@ -72,23 +120,34 @@ N=8 make run-mpi-n
 | `rms_norm` | 均方根归一化 | ✅ | - |
 | `rope` | 旋转位置编码 | ✅ | - |
 | `swiglu` | SwiGLU 激活函数 | ✅ | - |
-| `self_attention` | 自注意力机制 | ✅ | - |
+| `self_attention` | 自注意力机制 | ✅ | ✅ |
+| `cross_attention` | 交叉注意力机制 | ✅ | ✅ |
 | `all_reduce_sum` | MPI 全局求和 | - | ✅ |
 | `broadcast` | MPI 广播 | - | ✅ |
 
-## 性能优化
+## 性能基准
 
-### OpenMP 并行
+### Self-Attention OpenMP 扩展性
 
-- 矩阵运算自动并行化
-- 元素操作使用 OpenMP for 循环
-- 自动线程管理
+输入形状: (4, 8, 64, 64)
 
-### MPI 通信
+| 线程数 | 时间 | 加速比 |
+|-------|------|--------|
+| 1 | 10.064 ms | 1.00x |
+| 2 | 5.010 ms | 2.01x |
+| 4 | 4.184 ms | 2.41x |
+| 8 | 4.157 ms | 2.42x |
 
-- All-Reduce: 梯度同步
-- Broadcast: 参数同步
-- 高效数据传输
+### Cross-Attention OpenMP 扩展性
+
+Query: (4, 8, 32, 64), Key/Value: (4, 8, 128, 64)
+
+| 线程数 | 时间 | 加速比 |
+|-------|------|--------|
+| 1 | 14.951 ms | 1.00x |
+| 2 | 7.233 ms | 2.07x |
+| 4 | 3.812 ms | 3.92x |
+| 8 | 3.535 ms | 4.23x |
 
 ## 使用示例
 
@@ -101,150 +160,144 @@ N=8 make run-mpi-n
 using namespace tensor_lib;
 using namespace ops;
 
+// 创建零张量
+TensorF zeros = TensorF::zeros(Shape({2, 3}));
+
 // 创建随机张量
-TensorF x = TensorF::randn(Shape({2, 3}));
+TensorF random = TensorF::randn(Shape({2, 2}));
 
-// 创建全零张量
-TensorF zeros = TensorF::zeros(Shape({4, 5}));
+// 从数据创建
+std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
+TensorF x(data, Shape({2, 2}));
 ```
 
-### 基本运算
+### 线性层
 
 ```cpp
-// 加法
-TensorF z = x + y;
-TensorF result = add(x, y, 1.5f);  // x + 1.5*y
+// 输入: (batch=2, in_features=4)
+TensorF input = TensorF::randn(Shape({2, 4}));
 
-// 矩阵乘法
-TensorF C = A.matmul(B);
+// 权重: (out_features=3, in_features=4)
+TensorF weight = TensorF::randn(Shape({3, 4}));
 
-// 转置
-TensorF Ct = C.transpose();
-```
+// 偏置: (out_features=3)
+TensorF bias = TensorF::randn(Shape({3}));
 
-### 深度学习算子
-
-```cpp
-// 线性层
+// 前向传播
 TensorF output = linear(input, weight, &bias);
-
-// RMS 归一化
-TensorF normalized = rms_norm(input, &gamma, 1e-8);
-
-// 自注意力
-TensorF attn_output = self_attention(Q, K, V, nullptr, scale);
-
-// RoPE
-RotaryEmbedding<float> rope(64, 2048);
-TensorF q_rotated = rope.apply(Q, seq_len);
+// 输出形状: (2, 3)
 ```
 
-### MPI 分布式
+### Self-Attention
 
 ```cpp
-#ifdef MPI_VERSION
-// All-Reduce: 同步梯度
-all_reduce_sum(gradients, MPI_COMM_WORLD);
+// Q, K, V: (batch=1, heads=2, seq_len=4, head_dim=8)
+size_t batch = 1, heads = 2, seq_len = 4, head_dim = 8;
 
-// Broadcast: 同步参数
-broadcast(parameters, 0, MPI_COMM_WORLD);
-#endif
+TensorF query = TensorF::randn(Shape({batch, heads, seq_len, head_dim}));
+TensorF key = TensorF::randn(Shape({batch, heads, seq_len, head_dim}));
+TensorF value = TensorF::randn(Shape({batch, heads, seq_len, head_dim}));
+
+float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+
+TensorF output = self_attention(query, key, value,
+                                 static_cast<const TensorF*>(nullptr),
+                                 scale);
+// 输出形状: (1, 2, 4, 8)
 ```
 
-## 性能测试结果
-
-测试环境: Intel 16-core CPU, OpenMP 8 threads
-
-| 算子 | 规模 | 时间 (ms) | 加速比 |
-|------|------|----------|--------|
-| MatMul | 512x512 @ 512x512 | 1.2 | 6.5x (8线程) |
-| Linear | Batch=32, 128->256 | 0.8 | 4.2x (8线程) |
-| SelfAttn | Batch=2, Heads=8, Seq=64 | 2.1 | 3.8x (8线程) |
-| Embedding | Vocab=100, Dim=64 | 0.3 | 2.1x (8线程) |
-
-## 技术细节
-
-### 内存管理
-
-- 使用 `std::vector` 进行内存管理
-- 支持 move 语义减少拷贝
-- 零拷贝视图操作
-
-### 数值稳定性
-
-- Softmax 使用在线算法
-- EPS 保护避免除零
-- 精度控制 (float32)
-
-### 并行策略
-
-1. **OpenMP 并行**
-   - 元素级并行
-   - Reduction 优化
-   - NUMA 友好
-
-2. **MPI 并行**
-   - 数据并行
-   - 梯度累积
-   - 参数同步
-
-## 扩展性
-
-### 添加新算子
+### Cross-Attention
 
 ```cpp
-// 在 ops.h 中添加
-namespace ops {
-    template <typename T>
-    Tensor<T> my_op(const Tensor<T>& input) {
-        // 实现
-        #pragma omp parallel for
-        for (size_t i = 0; i < input.size(); ++i) {
-            // 处理
-        }
-        return Tensor<T>(...);
-    }
-}
+// Query: (batch=1, heads=2, query_len=4, head_dim=8)
+// Key/Value: (batch=1, heads=2, kv_len=6, head_dim=8)
+size_t query_len = 4, kv_len = 6;
+
+TensorF query = TensorF::randn(Shape({1, 2, query_len, 8}));
+TensorF key = TensorF::randn(Shape({1, 2, kv_len, 8}));
+TensorF value = TensorF::randn(Shape({1, 2, kv_len, 8}));
+
+TensorF output = cross_attention(query, key, value,
+                                  static_cast<const TensorF*>(nullptr),
+                                  0.353f);
+// 输出形状: (1, 2, 4, 8) - 与 query 形状相同
 ```
 
-### 自定义并行策略
+### Element-wise 操作
 
 ```cpp
-// 设置 OpenMP 线程数
-omp_set_num_threads(16);
-
-// 使用 MPI Barrier
-MPI_Barrier(MPI_COMM_WORLD);
+TensorF a = TensorF::ones(Shape({2, 2}));
+TensorF b = a * 2.0f;      // 标量乘法
+TensorF c = a + b;         // 张量加法
+TensorF d = a.sqrt();      // 平方根
+TensorF e = a.exp();       // 指数
 ```
 
-## 故障排除
+## 集成到你的项目
 
-### 编译错误
+### 方式 1: 复制头文件
 
 ```bash
-# 如果 MPI 头文件找不到
-sudo apt-get install libopenmpi-dev
-
-# 如果 OpenMP 不可用
-# 检查编译器是否支持: g++ --fopenmp test.cpp
+cp -r include/tensor_lib /path/to/your/project/include/
 ```
 
-### 运行时错误
+### 方式 2: 作为 Git Submodule
 
 ```bash
-# MPI 运行失败
-# 使用系统的 mpirun 而不是 conda 的
-/usr/bin/mpirun -np 4 ./build/test_ops_mpi
+git submodule add <repo-url> external/tensor_lib_cpp
 ```
+
+在 Makefile 中：
+```makefile
+CXXFLAGS += -Iexternal/tensor_lib_cpp/include -fopenmp -std=c++17
+```
+
+### 方式 3: 直接使用
+
+```bash
+# 在你的项目中
+g++ -std=c++17 -O3 -I/path/to/tensor_lib_cpp/include \
+    -fopenmp your_code.cpp -o your_program
+```
+
+## Makefile 目标
+
+| 命令 | 说明 |
+|------|------|
+| `make` | 编译所有测试和示例 |
+| `make run` | 运行基础算子测试 |
+| `make run-mpi` | 运行 MPI 测试 (4进程) |
+| `make test-attention` | 运行 Attention 测试 |
+| `make test-attention-mpi` | 运行 Attention MPI 测试 |
+| `make examples` | 编译示例 |
+| `make run-examples` | 编译并运行示例 |
+| `make clean` | 清理编译产物 |
+| `make help` | 显示所有命令 |
+
+## 代码规范
+
+1. **命名约定**:
+   - 类名: `PascalCase` (如 `Tensor`, `Shape`)
+   - 函数名: `snake_case` (如 `self_attention`, `add`)
+   - 模板参数: `<typename T>`
+
+2. **内存管理**:
+   - 使用 `std::move` 返回大张量
+   - 移动语义优化
+
+3. **并行化**:
+   - OpenMP: `#pragma omp parallel for if(condition)`
+   - MPI: 使用 `#ifdef MPI_VERSION` 包裹
+
+## 文档
+
+- [项目结构说明](docs/PROJECT_STRUCTURE.md) - 详细的目录组织和设计说明
+- `examples/basic_usage.cpp` - 完整的使用示例
 
 ## 许可证
 
 MIT License
 
-## 作者
+## 贡献
 
-Claude Code Assistant
-
-## 更新日志
-
-- v0.1.0 (2025-01-11): 初始版本，支持所有大模型算子
+欢迎提交 Issue 和 Pull Request！

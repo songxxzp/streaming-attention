@@ -21,6 +21,7 @@ OBJS = $(SRCS:%.cpp=%.o)
 TEST_SRC = tests/test_ops.cpp
 ATTENTION_TEST_SRC = tests/test_attention.cpp
 STREAMING_TEST_SRC = tests/test_streaming_attention.cpp
+TORCH_VALIDATION_SRC = tests/torch_validation.cpp
 EXAMPLES_SRC = examples/basic_usage.cpp
 
 # Output directories
@@ -28,7 +29,7 @@ BUILD_DIR = build
 RESULTS_DIR = results
 
 # Targets
-.PHONY: all clean test test-attention test-streaming examples run run-examples help
+.PHONY: all clean test test-attention test-streaming torch-validation examples run run-examples help
 
 all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/basic_usage
 
@@ -115,6 +116,16 @@ test-streaming-mpi: $(BUILD_DIR)/test_streaming_mpi
 	@echo "Running streaming attention tests with MPI (4 processes)..."
 	@mpirun -np 4 ./$(BUILD_DIR)/test_streaming_mpi
 
+# PyTorch validation tests
+torch-validation: $(BUILD_DIR)/torch_validation
+	@echo "Running PyTorch validation tests..."
+	@./$(BUILD_DIR)/torch_validation
+
+$(BUILD_DIR)/torch_validation: $(OBJS) $(TORCH_VALIDATION_SRC) | $(BUILD_DIR)
+	@echo "Building torch_validation..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(TORCH_VALIDATION_SRC)
+	@echo "Built: $@"
+
 # Examples
 .PHONY: examples run-examples
 examples: $(BUILD_DIR)/basic_usage
@@ -143,6 +154,7 @@ help:
 	@echo "  test-attention-mpi - Run attention tests with MPI"
 	@echo "  test-streaming     - Run streaming attention tests"
 	@echo "  test-streaming-mpi - Run streaming attention tests with MPI"
+	@echo "  torch-validation   - Run PyTorch validation tests"
 	@echo "  examples           - Build usage examples"
 	@echo "  run-examples       - Build and run examples"
 	@echo "  clean              - Remove build artifacts"

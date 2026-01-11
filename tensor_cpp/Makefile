@@ -20,6 +20,7 @@ OBJS = $(SRCS:%.cpp=%.o)
 # Test files
 TEST_SRC = tests/test_ops.cpp
 ATTENTION_TEST_SRC = tests/test_attention.cpp
+STREAMING_TEST_SRC = tests/test_streaming_attention.cpp
 EXAMPLES_SRC = examples/basic_usage.cpp
 
 # Output directories
@@ -27,7 +28,7 @@ BUILD_DIR = build
 RESULTS_DIR = results
 
 # Targets
-.PHONY: all clean test test-attention examples run run-examples help
+.PHONY: all clean test test-attention test-streaming examples run run-examples help
 
 all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/basic_usage
 
@@ -65,6 +66,18 @@ $(BUILD_DIR)/test_attention_mpi: $(OBJS) $(ATTENTION_TEST_SRC) | $(BUILD_DIR)
 	$(MPI_CXX) $(CXXFLAGS) $(MPIFLAGS) $(INCLUDES) $(MPI_INCLUDES) -o $@ $(OBJS) $(ATTENTION_TEST_SRC)
 	@echo "Built: $@"
 
+# Streaming attention test (OpenMP)
+$(BUILD_DIR)/test_streaming: $(OBJS) $(STREAMING_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_streaming..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(STREAMING_TEST_SRC)
+	@echo "Built: $@"
+
+# Streaming attention test (MPI)
+$(BUILD_DIR)/test_streaming_mpi: $(OBJS) $(STREAMING_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_streaming_mpi..."
+	$(MPI_CXX) $(CXXFLAGS) $(MPIFLAGS) $(INCLUDES) $(MPI_INCLUDES) -o $@ $(OBJS) $(STREAMING_TEST_SRC)
+	@echo "Built: $@"
+
 # Examples
 $(BUILD_DIR)/basic_usage: $(OBJS) $(EXAMPLES_SRC) | $(BUILD_DIR)
 	@echo "Building basic_usage..."
@@ -93,6 +106,15 @@ test-attention-mpi: $(BUILD_DIR)/test_attention_mpi
 	@echo "Running attention tests with MPI (4 processes)..."
 	@mpirun -np 4 ./$(BUILD_DIR)/test_attention_mpi
 
+# Streaming attention tests
+test-streaming: $(BUILD_DIR)/test_streaming
+	@echo "Running streaming attention tests..."
+	@./$(BUILD_DIR)/test_streaming
+
+test-streaming-mpi: $(BUILD_DIR)/test_streaming_mpi
+	@echo "Running streaming attention tests with MPI (4 processes)..."
+	@mpirun -np 4 ./$(BUILD_DIR)/test_streaming_mpi
+
 # Examples
 .PHONY: examples run-examples
 examples: $(BUILD_DIR)/basic_usage
@@ -119,6 +141,8 @@ help:
 	@echo "  run-mpi-n          - Run tests with N MPI processes (N=8 make run-mpi-n)"
 	@echo "  test-attention     - Run attention tests (Self & Cross)"
 	@echo "  test-attention-mpi - Run attention tests with MPI"
+	@echo "  test-streaming     - Run streaming attention tests"
+	@echo "  test-streaming-mpi - Run streaming attention tests with MPI"
 	@echo "  examples           - Build usage examples"
 	@echo "  run-examples       - Build and run examples"
 	@echo "  clean              - Remove build artifacts"

@@ -38,7 +38,7 @@ DEFAULT_TEST_RUNS = 10
 DEFAULT_BLOCK_SIZES = [32, 64, 128]
 DEFAULT_THREADS_LIST = [1, 2, 4, 8, 16]
 DEFAULT_SEQ_LEN_SCALABILITY = 8192
-DEFAULT_BASELINE = "torch"
+DEFAULT_BASELINE = "serial"
 DEFAULT_MPI_RANKS_LIST = [1, 2, 4]
 DEFAULT_MPI_OMP_THREADS_LIST = [2, 4]
 
@@ -401,28 +401,31 @@ def run_comparison(args):
         return
 
     # ============================================================================
-    # 测试1: 串行性能对比 (PyTorch vs C++ Naive Serial vs C++ Streaming Serial)
+    # 测试1: 串行性能对比 (C++ Naive Serial vs C++ Streaming Serial)
     # ============================================================================
     print("=" * 100)
     print("  测试1: 串行性能对比")
     print("=" * 100)
     print()
 
-    print("序列长度 | Block Size | PyTorch(ms) | Naive(ms) | Streaming(ms) | PT-吞吐 | Naive-吞吐 | Streaming-吞吐")
-    print("---------|------------|------------|-----------|---------------|---------|-----------|--------------")
+    # 根据是否有PyTorch动态生成表头
+    if HAS_TORCH:
+        print("序列长度 | Block Size | PyTorch(ms) | Naive(ms) | Streaming(ms) | PT-吞吐 | Naive-吞吐 | Streaming-吞吐")
+        print("---------|------------|------------|-----------|---------------|---------|-----------|--------------")
+    else:
+        print("序列长度 | Block Size | Naive(ms) | Streaming(ms) | Naive-吞吐 | Streaming-吞吐")
+        print("---------|------------|-----------|---------------|-----------|--------------")
 
     for seq_len in args.seqlen:
-        # PyTorch SDPA
+        # PyTorch SDPA (如果可用)
+        pytorch_time = None
+        pytorch_throughput = None
         if HAS_TORCH:
             try:
                 pytorch_time = test_pytorch_sdpa(seq_len, args.dim, args.warmup, args.repeat)
                 pytorch_throughput = seq_len * 1000 / pytorch_time
             except Exception as e:
                 print(f"  ✗ PyTorch测试失败: {e}")
-                continue
-        else:
-            print(f"  ✗ 跳过序列长度 {seq_len} (PyTorch未安装)")
-            continue
 
         # 对每个block_size测试streaming
         for block_size in args.block_sizes:
@@ -436,30 +439,49 @@ def run_comparison(args):
             # C++ Streaming Serial
             streaming_time, streaming_success = test_cpp_attention(seq_len, args.dim, block_size, 1, args.cpp_streaming_serial, args.repeat)
 
-            if naive_success and streaming_success:
-                naive_throughput = seq_len * 1000 / naive_time
-                streaming_throughput = seq_len * 1000 / streaming_time
-                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} | {streaming_time:14.4f} | "
-                      f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} | {streaming_throughput:13.2f}")
-            elif naive_success:
-                naive_throughput = seq_len * 1000 / naive_time
-                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} |      N/A       | "
-                      f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} |      N/A      ")
-            elif streaming_success:
-                streaming_throughput = seq_len * 1000 / streaming_time
-                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    | {streaming_time:14.4f} | "
-                      f"{pytorch_throughput:8.2f} |     N/A    | {streaming_throughput:13.2f}")
+            # 根据是否有PyTorch选择输出格式
+            if HAS_TORCH and pytorch_time is not None:
+                if naive_success and streaming_success:
+                    naive_throughput = seq_len * 1000 / naive_time
+                    streaming_throughput = seq_len * 1000 / streaming_time
+                    print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} | {streaming_time:14.4f} | "
+                          f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} | {streaming_throughput:13.2f}")
+                elif naive_success:
+                    naive_throughput = seq_len * 1000 / naive_time
+                    print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} | {naive_time:10.4f} |      N/A       | "
+                          f"{pytorch_throughput:8.2f} | {naive_throughput:10.2f} |      N/A      ")
+                elif streaming_success:
+                    streaming_throughput = seq_len * 1000 / streaming_time
+                    print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    | {streaming_time:14.4f} | "
+                          f"{pytorch_throughput:8.2f} |     N/A    | {streaming_throughput:13.2f}")
+                else:
+                    print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    |      N/A       | "
+                          f"{pytorch_throughput:8.2f} |     N/A    |      N/A      ")
             else:
-                print(f"{seq_len:8d} | {block_size:10d} | {pytorch_time:11.4f} |     N/A    |      N/A       | "
-                      f"{pytorch_throughput:8.2f} |     N/A    |      N/A      ")
+                # 不包含PyTorch的输出
+                if naive_success and streaming_success:
+                    naive_throughput = seq_len * 1000 / naive_time
+                    streaming_throughput = seq_len * 1000 / streaming_time
+                    print(f"{seq_len:8d} | {block_size:10d} | {naive_time:10.4f} | {streaming_time:14.4f} | {naive_throughput:10.2f} | {streaming_throughput:13.2f}")
+                elif naive_success:
+                    naive_throughput = seq_len * 1000 / naive_time
+                    print(f"{seq_len:8d} | {block_size:10d} | {naive_time:10.4f} |      N/A       | {naive_throughput:10.2f} |      N/A      ")
+                elif streaming_success:
+                    streaming_throughput = seq_len * 1000 / streaming_time
+                    print(f"{seq_len:8d} | {block_size:10d} |     N/A    | {streaming_time:14.4f} |     N/A    | {streaming_throughput:13.2f}")
+                else:
+                    print(f"{seq_len:8d} | {block_size:10d} |     N/A    |      N/A       |     N/A    |      N/A      ")
 
     print()
 
     # ============================================================================
-    # 测试2: Naive OpenMP扩展性 (包含PyTorch对比)
+    # 测试2: Naive OpenMP扩展性
     # ============================================================================
     print("=" * 100)
-    print(f"  测试2: Naive Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比)")
+    if HAS_TORCH and args.baseline == "torch":
+        print(f"  测试2: Naive Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比)")
+    else:
+        print(f"  测试2: Naive Attention OpenMP扩展性 (seq_len={args.seqlen_scale})")
     print("=" * 100)
     print()
 
@@ -514,10 +536,13 @@ def run_comparison(args):
     print()
 
     # ============================================================================
-    # 测试3: Streaming OpenMP扩展性 (包含PyTorch对比, 测试不同block_size)
+    # 测试3: Streaming OpenMP扩展性 (测试不同block_size)
     # ============================================================================
     print("=" * 100)
-    print(f"  测试3: Streaming Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比, 测试不同block_size)")
+    if HAS_TORCH and args.baseline == "torch":
+        print(f"  测试3: Streaming Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 包含PyTorch对比, 测试不同block_size)")
+    else:
+        print(f"  测试3: Streaming Attention OpenMP扩展性 (seq_len={args.seqlen_scale}, 测试不同block_size)")
     print("=" * 100)
     print()
 
@@ -655,7 +680,8 @@ def run_comparison(args):
     print("1. 算法对比:")
     print("   - Naive Attention: 计算完整Q@K^T矩阵，空间O(T²)，适合短序列")
     print("   - Streaming Attention: 分块计算+online softmax，空间O(Td)，适合长序列")
-    print("   - PyTorch SDPA: 使用高度优化的BLAS库 (MKL/oneDNN)")
+    if HAS_TORCH:
+        print("   - PyTorch SDPA: 使用高度优化的BLAS库 (MKL/oneDNN)")
     print()
 
     print("2. 并行化策略:")
@@ -667,7 +693,8 @@ def run_comparison(args):
     print()
 
     print("3. 性能特点:")
-    print("   - PyTorch: 单线程最快（BLAS优化 + SIMD）")
+    if HAS_TORCH:
+        print("   - PyTorch: 单线程最快（BLAS优化 + SIMD）")
     print("   - Naive OpenMP: 多线程可扩展性好，计算密集型")
     print("   - Streaming OpenMP: 内存友好，适合超长序列")
     if args.enable_mpi:

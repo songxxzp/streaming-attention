@@ -30,11 +30,12 @@ int main() {
         Qwen3Weights weights = load_qwen3_weights(model_path);
         std::cout << "Weights loaded!\n\n";
 
-        // Test prompts with pre-computed token IDs (from current tokenizer)
+        // Test prompts with correct prompt template applied
+        // Format: <|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
         std::vector<std::pair<std::string, std::vector<long>>> tests = {
-            {"Hello, world!", {9707, 11, 1879, 0}},
-            {"The capital of France is", {785, 6722, 315, 9625, 374}},
-            {"What is machine learning?", {3838, 374, 5662, 6832, 30}}
+            {"Hello", {151644, 872, 198, 9707, 151645, 198, 151644, 77091, 198}},
+            {"Hello, world!", {151644, 872, 198, 9707, 11, 1879, 0, 151645, 198, 151644, 77091, 198}},
+            {"The capital of France is", {151644, 872, 198, 785, 6722, 315, 9625, 374, 151645, 198, 151644, 77091, 198}}
         };
 
         // For each test case
@@ -155,7 +156,7 @@ int main() {
 
             std::stringstream token_ss;
             for (size_t i = 0; i < input_ids_data.size(); ++i) {
-                if (i > 0) token_ss << " ";
+                if (i > 0) token_ss << ", ";
                 token_ss << input_ids_data[i];
             }
 

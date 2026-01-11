@@ -23,6 +23,9 @@ __pycache__/
 *.swp
 *.swo
 
+# Trash directory
+trash/
+
 # OS
 .DS_Store
 Thumbs.db

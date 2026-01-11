@@ -28,7 +28,11 @@ namespace qwen3 {
 struct Qwen3LayerWeights {
     // Attention weights
     Tensor qkv_projs;      // Combined QKV projection [hidden_size, 3 * num_heads * head_dim]
-    Tensor o_proj;          // Output projection [hidden_size, hidden_size]
+    Tensor o_proj;         // Output projection [hidden_size, hidden_size]
+
+    // QKNorm weights (Qwen3-specific: normalize Q and K per-head)
+    Tensor q_norm_weight;  // [head_dim]
+    Tensor k_norm_weight;  // [head_dim]
 
     // Layer norms
     Tensor input_layernorm_weight;
@@ -137,6 +141,8 @@ Tensor qwen3_attention(
     const Tensor& k_proj,
     const Tensor& v_proj,
     const Tensor& o_proj,
+    const Tensor& q_norm_weight,  // QKNorm for Q (per-head normalization)
+    const Tensor& k_norm_weight,  // QKNorm for K (per-head normalization)
     const Tensor& cos,
     const Tensor& sin,
     bool has_cache = false
@@ -192,6 +198,8 @@ Tensor qwen3_decoder_layer(
     const Tensor& input_layernorm_weight,
     const Tensor& qkv_projs,  // Combined QKV weights
     const Tensor& o_proj,
+    const Tensor& q_norm_weight,  // QKNorm for Q (per-head normalization)
+    const Tensor& k_norm_weight,  // QKNorm for K (per-head normalization)
     const Tensor& post_attention_layernorm_weight,
     const Tensor& gate_mlp,
     const Tensor& up_mlp,

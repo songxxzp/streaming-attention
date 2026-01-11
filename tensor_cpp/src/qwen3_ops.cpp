@@ -308,6 +308,8 @@ Tensor qwen3_attention(
     const Tensor& k_proj,
     const Tensor& v_proj,
     const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
     const Tensor& cos,
     const Tensor& sin,
     bool has_cache
@@ -336,8 +338,70 @@ Tensor qwen3_attention(
     Tensor k = k_reshaped.transpose(1, 2);  // [batch, num_kv_heads, seq_len, head_dim]
     Tensor v = v_reshaped.transpose(1, 2);  // [batch, num_kv_heads, seq_len, head_dim]
 
-    // Apply RoPE
-    auto [q_rope, k_rope] = apply_rotary_pos_emb(q, k, cos, sin);
+    // ========== QKNorm: Apply RMS normalization to Q and K per-head ==========
+    // This is Qwen3-specific: normalize Q and K along the head_dim dimension
+    // q_norm_weight and k_norm_weight have shape [head_dim]
+    const float* q_norm_data = q_norm_weight.data();
+    const float* k_norm_data = k_norm_weight.data();
+
+    // Apply QKNorm to Q: [batch, num_heads, seq_len, head_dim]
+    // Normalize along the last dimension (head_dim)
+    size_t q_total_elements = batch * q_total_heads * seq_len * head_dim;
+    std::vector<float> q_normed_data(q_total_elements);
+    #pragma omp parallel for if(batch * q_total_heads * seq_len * head_dim > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < q_total_heads; ++h) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                size_t base_idx = ((b * q_total_heads + h) * seq_len + s) * head_dim;
+
+                // Compute variance
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < head_dim; ++i) {
+                    float val = q[base_idx + i];
+                    sum_sq += val * val;
+                }
+                float variance = sum_sq / head_dim;
+                float rms = std::sqrt(variance + 1e-6f);
+
+                // Normalize and scale
+                for (size_t i = 0; i < head_dim; ++i) {
+                    q_normed_data[base_idx + i] = (q[base_idx + i] / rms) * q_norm_data[i];
+                }
+            }
+        }
+    }
+    Tensor q_normed(std::move(q_normed_data), q.shape());
+
+    // Apply QKNorm to K: [batch, num_kv_heads, seq_len, head_dim]
+    size_t k_total_elements = batch * kv_total_heads * seq_len * head_dim;
+    std::vector<float> k_normed_data(k_total_elements);
+    #pragma omp parallel for if(batch * kv_total_heads * seq_len * head_dim > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < kv_total_heads; ++h) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                size_t base_idx = ((b * kv_total_heads + h) * seq_len + s) * head_dim;
+
+                // Compute variance
+                float sum_sq = 0.0f;
+                for (size_t i = 0; i < head_dim; ++i) {
+                    float val = k[base_idx + i];
+                    sum_sq += val * val;
+                }
+                float variance = sum_sq / head_dim;
+                float rms = std::sqrt(variance + 1e-6f);
+
+                // Normalize and scale
+                for (size_t i = 0; i < head_dim; ++i) {
+                    k_normed_data[base_idx + i] = (k[base_idx + i] / rms) * k_norm_data[i];
+                }
+            }
+        }
+    }
+    Tensor k_normed(std::move(k_normed_data), k.shape());
+    // ========== End QKNorm ==========
+
+    // Apply RoPE (now to normalized Q and K)
+    auto [q_rope, k_rope] = apply_rotary_pos_emb(q_normed, k_normed, cos, sin);
 
     // Repeat KV for GQA
     int n_rep = static_cast<int>(num_attention_heads / num_key_value_heads);
@@ -379,6 +443,8 @@ Tensor qwen3_decoder_layer(
     const Tensor& input_layernorm_weight,
     const Tensor& qkv_projs,
     const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
     const Tensor& post_attention_layernorm_weight,
     const Tensor& gate_mlp,
     const Tensor& up_mlp,
@@ -430,6 +496,8 @@ Tensor qwen3_decoder_layer(
         k_proj,
         v_proj,
         o_proj,
+        q_norm_weight,
+        k_norm_weight,
         cos,
         sin,
         false
@@ -492,6 +560,8 @@ Tensor qwen3_forward(
             layer.input_layernorm_weight,
             layer.qkv_projs,
             layer.o_proj,
+            layer.q_norm_weight,
+            layer.k_norm_weight,
             layer.post_attention_layernorm_weight,
             layer.gate_proj,
             layer.up_proj,

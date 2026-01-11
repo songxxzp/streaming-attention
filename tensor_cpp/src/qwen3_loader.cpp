@@ -230,6 +230,13 @@ Qwen3Weights load_qwen3_weights(const std::string& path) {
         Tensor v_proj = load_tensor_from_file(
             file, header_json, "model.layers." + std::to_string(i) + ".self_attn.v_proj.weight", header_len);
 
+        // QKNorm weights (Qwen3-specific)
+        layer.q_norm_weight = load_tensor_from_file(
+            file, header_json, "model.layers." + std::to_string(i) + ".self_attn.q_norm.weight", header_len);
+
+        layer.k_norm_weight = load_tensor_from_file(
+            file, header_json, "model.layers." + std::to_string(i) + ".self_attn.k_norm.weight", header_len);
+
         layer.o_proj = load_tensor_from_file(
             file, header_json, "model.layers." + std::to_string(i) + ".self_attn.o_proj.weight", header_len);
 

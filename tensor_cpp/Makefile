@@ -26,6 +26,7 @@ QWEN3_TEST_SRC = tests/test_qwen3.cpp
 QWEN3_DECODE_TEST_SRC = tests/test_qwen3_decode.cpp
 QWEN3_GENERATE_TEST_SRC = tests/test_qwen3_generate.cpp
 QWEN3_VERIFY_TEST_SRC = tests/test_qwen3_verify.cpp
+QWEN3_LOGITS_TEST_SRC = tests/test_qwen3_logits.cpp
 EXAMPLES_SRC = examples/basic_usage.cpp
 
 # Output directories
@@ -35,7 +36,7 @@ RESULTS_DIR = results
 # Targets
 .PHONY: all clean test test-attention test-streaming test-qwen3 test-decode test-generate torch-validation examples run run-examples help
 
-all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/test_qwen3 $(BUILD_DIR)/test_qwen3_decode $(BUILD_DIR)/test_qwen3_generate $(BUILD_DIR)/test_qwen3_verify $(BUILD_DIR)/basic_usage
+all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/test_qwen3 $(BUILD_DIR)/test_qwen3_decode $(BUILD_DIR)/test_qwen3_generate $(BUILD_DIR)/test_qwen3_verify $(BUILD_DIR)/test_qwen3_logits $(BUILD_DIR)/basic_usage
 
 # Create build directory
 $(BUILD_DIR):
@@ -111,6 +112,12 @@ $(BUILD_DIR)/test_qwen3_generate: $(OBJS) $(QWEN3_GENERATE_TEST_SRC) | $(BUILD_D
 $(BUILD_DIR)/test_qwen3_verify: $(OBJS) $(QWEN3_VERIFY_TEST_SRC) | $(BUILD_DIR)
 	@echo "Building test_qwen3_verify..."
 	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_VERIFY_TEST_SRC)
+	@echo "Built: $@"
+
+# Qwen3 logits test
+$(BUILD_DIR)/test_qwen3_logits: $(OBJS) $(QWEN3_LOGITS_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_qwen3_logits..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_LOGITS_TEST_SRC)
 	@echo "Built: $@"
 
 # Run tests

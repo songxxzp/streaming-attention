@@ -31,6 +31,7 @@ set(TENSOR_SOURCES
     src/ops_mpi.cpp
     src/qwen3_ops_mpi.cpp
     src/ops_avx.cpp
+    src/qwen3_tensor_parallel.cpp
 )
 
 # Build tensor library
@@ -85,6 +86,12 @@ target_link_libraries(test_mpi_ops PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenM
 
 add_executable(test_avx_ops tests/test_avx_ops.cpp)
 target_link_libraries(test_avx_ops PRIVATE tensor_cpp)
+
+add_executable(benchmark_performance tests/benchmark_performance.cpp)
+target_link_libraries(benchmark_performance PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_tensor_parallel tests/test_tensor_parallel.cpp)
+target_link_libraries(test_tensor_parallel PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)

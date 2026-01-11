@@ -71,7 +71,7 @@ std::vector<float> matmul_avx(
                 sum = _mm512_fmadd_ps(a, b, sum);  // sum += a * b
             }
 
-            // Horizontal sum
+            // Horizontal sum using _mm512_reduce_add_ps
             float result = _mm512_reduce_add_ps(sum);
 
             // Handle remaining elements
@@ -108,12 +108,16 @@ std::vector<float> matmul_avx(
                 sum0 = _mm256_fmadd_ps(a, b, sum0);
             }
 
-            // Horizontal sum
+            // Horizontal sum - use more accurate method
+            // Shuffle to add pairs
             sum0 = _mm256_add_ps(sum0, sum1);
+            sum0 = _mm256_hadd_ps(sum0, sum0);
+            sum0 = _mm256_hadd_ps(sum0, sum0);
+
+            // Extract the result
             float temp[8];
             _mm256_storeu_ps(temp, sum0);
-            float result = temp[0] + temp[1] + temp[2] + temp[3] +
-                          temp[4] + temp[5] + temp[6] + temp[7];
+            float result = temp[0] + temp[4];
 
             // Handle remaining elements
             for (; k < K; ++k) {
@@ -182,12 +186,15 @@ float dot_avx(const float* x, const float* y, int size) {
         sum0 = _mm256_fmadd_ps(vx, vy, sum0);
     }
 
-    // Horizontal sum
+    // Horizontal sum - use more accurate method
     sum0 = _mm256_add_ps(sum0, sum1);
+    sum0 = _mm256_hadd_ps(sum0, sum0);
+    sum0 = _mm256_hadd_ps(sum0, sum0);
+
+    // Extract the result
     float temp[8];
     _mm256_storeu_ps(temp, sum0);
-    result = temp[0] + temp[1] + temp[2] + temp[3] +
-              temp[4] + temp[5] + temp[6] + temp[7];
+    result = temp[0] + temp[4];
 #endif
 
     // Handle remaining elements

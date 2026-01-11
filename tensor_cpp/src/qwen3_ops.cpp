@@ -273,19 +273,19 @@ Tensor qwen3_mlp(
     // up_proj: [intermediate_size, hidden_size]
     // down_proj: [hidden_size, intermediate_size]
 
-    // Compute gate = SiLU(gate_proj(x))
+    // Compute gate = gate_proj(x)
     Tensor gate = ops::linear(hidden_states, gate_proj, nullptr);
-    gate = ops::swiglu(gate, gate);  // SwiGLU: SiLU(gate) * gate
 
     // Compute up = up_proj(x)
     Tensor up = ops::linear(hidden_states, up_proj, nullptr);
 
-    // Compute element-wise: gate * up
+    // SwiGLU activation: SiLU(gate) * up
     const Shape& gate_shape = gate.shape();
     std::vector<float> gated_data(gate.size());
     #pragma omp parallel for if(gate.size() > 1000)
     for (size_t i = 0; i < gate.size(); ++i) {
-        gated_data[i] = gate[i] * up[i];
+        float silu_gate = gate[i] * (1.0f / (1.0f + std::exp(-gate[i])));
+        gated_data[i] = silu_gate * up[i];
     }
     Tensor gated(std::move(gated_data), gate_shape);
 

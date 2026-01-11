@@ -27,6 +27,29 @@ std::vector<float> naive_attention_serial(
 );
 
 /**
+ * Naive Attention with OpenMP Parallelization
+ *
+ * Same algorithm as naive_attention_serial, but parallelized using OpenMP.
+ * Uses parallel for loops and reductions for matrix multiplication and softmax.
+ *
+ * @param Q Query vector [1 x d]
+ * @param K Key cache [T x d]
+ * @param V Value cache [T x d]
+ * @param T Sequence length
+ * @param d Hidden dimension
+ * @param num_threads Number of OpenMP threads
+ * @return Output vector [1 x d]
+ */
+std::vector<float> naive_attention_omp(
+    const float* Q,
+    const float* K,
+    const float* V,
+    int T,
+    int d,
+    int num_threads = 0
+);
+
+/**
  * Streaming Block Attention (Serial)
  * Uses online softmax to compute attention in blocks
  *

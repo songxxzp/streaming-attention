@@ -1,4 +1,4 @@
-#include "attention/attention.h"
+#include "attention.h"
 #include <cmath>
 #include <vector>
 #include <limits>

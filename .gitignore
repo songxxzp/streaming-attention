@@ -85,3 +85,6 @@ Thumbs.db
 *.npy
 test_data/
 results/
+
+# PDF
+*.pdf

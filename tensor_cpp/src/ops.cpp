@@ -235,6 +235,10 @@ Tensor linear(const Tensor& input, const Tensor& weight,
         for (size_t o = 0; o < out_features; ++o) {
             float sum = 0.0f;
             for (size_t i = 0; i < in_features; ++i) {
+                // PyTorch linear: output = input @ weight.T
+                // weight shape: [out_features, in_features]
+                // For output[o], we need: sum over i of input[i] * weight[o, i]
+                // In row-major: weight[o, i] = weight[o * in_features + i]
                 sum += input[s * in_features + i] * weight[o * in_features + i];
             }
             output[s * out_features + o] = sum;

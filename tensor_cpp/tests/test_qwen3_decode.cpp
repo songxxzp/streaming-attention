@@ -103,6 +103,9 @@ int main() {
         for (size_t v = 0; v < vocab_size; ++v) {
             float sum = 0.0f;
             for (size_t h = 0; h < hidden_size; ++h) {
+                // lm_head shape: [vocab_size, hidden_size]
+                // We need: logits[v] = sum over h of hidden[h] * lm_head[v, h]
+                // In row-major: lm_head[v, h] = lm_head[v * hidden_size + h]
                 sum += last_hidden[h] * weights.lm_head[v * hidden_size + h];
             }
             logits_data[v] = sum;

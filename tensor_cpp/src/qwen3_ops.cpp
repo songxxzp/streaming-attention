@@ -457,31 +457,42 @@ Tensor qwen3_decoder_layer(
     Tensor normed = ops::rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
 
     // Split QKV projections
-    // qkv_projs shape: [hidden_size, 3 * num_attention_heads * head_dim]
-    // For Qwen3-0.6B: [1024, 3 * 16 * 128] = [1024, 6144]
+    // qkv_projs shape: [q_out + k_out + v_out, hidden_size]
+    // For Qwen3-0.6B: [2048 + 1024 + 1024, 1024] = [4096, 1024]
+    // Rows 0 to q_size-1 are q_proj, rows q_size to q_size+k_size-1 are k_proj, etc.
     size_t hidden_size = hidden_states.shape()[2];
     size_t q_size = num_attention_heads * head_dim;  // 16 * 128 = 2048
     size_t k_size = num_key_value_heads * head_dim;  // 8 * 128 = 1024
     size_t v_size = num_key_value_heads * head_dim;  // 8 * 128 = 1024
 
     // Extract Q, K, V from combined QKV
-    std::vector<float> q_data(hidden_size * q_size);
-    std::vector<float> k_data(hidden_size * k_size);
-    std::vector<float> v_data(hidden_size * v_size);
+    // Each projection is stored as [out_features, hidden_size] which is what we need
+    std::vector<float> q_data(q_size * hidden_size);
+    std::vector<float> k_data(k_size * hidden_size);
+    std::vector<float> v_data(v_size * hidden_size);
 
-    #pragma omp parallel for if(hidden_size * (q_size + k_size + v_size) > 1000)
-    for (size_t i = 0; i < hidden_size; ++i) {
-        for (size_t j = 0; j < q_size; ++j) {
-            q_data[i * q_size + j] = qkv_projs[i * (q_size + k_size + v_size) + j];
-        }
-        for (size_t j = 0; j < k_size; ++j) {
-            k_data[i * k_size + j] = qkv_projs[i * (q_size + k_size + v_size) + q_size + j];
-        }
-        for (size_t j = 0; j < v_size; ++j) {
-            v_data[i * v_size + j] = qkv_projs[i * (q_size + k_size + v_size) + q_size + k_size + j];
+    // q_proj: rows 0 to q_size-1 of qkv_projs
+    for (size_t row = 0; row < q_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            q_data[row * hidden_size + col] = qkv_projs[row * hidden_size + col];
         }
     }
 
+    // k_proj: rows q_size to q_size+k_size-1 of qkv_projs
+    for (size_t row = 0; row < k_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            k_data[row * hidden_size + col] = qkv_projs[(q_size + row) * hidden_size + col];
+        }
+    }
+
+    // v_proj: rows q_size+k_size to q_size+k_size+v_size-1 of qkv_projs
+    for (size_t row = 0; row < v_size; ++row) {
+        for (size_t col = 0; col < hidden_size; ++col) {
+            v_data[row * hidden_size + col] = qkv_projs[(q_size + k_size + row) * hidden_size + col];
+        }
+    }
+
+    // Each proj has shape [proj_size, hidden_size] for linear layer
     Tensor q_proj(std::move(q_data), Shape({static_cast<long>(q_size), static_cast<long>(hidden_size)}));
     Tensor k_proj(std::move(k_data), Shape({static_cast<long>(k_size), static_cast<long>(hidden_size)}));
     Tensor v_proj(std::move(v_data), Shape({static_cast<long>(v_size), static_cast<long>(hidden_size)}));

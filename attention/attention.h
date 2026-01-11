@@ -3,6 +3,12 @@
 
 #include <vector>
 
+// Forward declaration for MPI_Comm (needed before function declarations)
+// Only provide forward declaration if MPI headers are not included
+#if !defined(MPI_COMM_WORLD) && !defined(OMPI_MPI_H) && !defined(MPICH_NAME) && !defined(MPI_VERSION) && !defined(MPI_Comm)
+typedef void* MPI_Comm;
+#endif
+
 // Attention computation interfaces
 // All inputs use row-major ordering
 
@@ -47,6 +53,57 @@ std::vector<float> naive_attention_omp(
     int T,
     int d,
     int num_threads = 0
+);
+
+/**
+ * Naive Attention with MPI + OpenMP Hybrid Parallelization
+ *
+ * Distributes T tokens across multiple MPI ranks.
+ * Each rank internally uses OpenMP for parallelization.
+ *
+ * @param Q_local Query vector [1 x d] (only rank 0 needs valid data)
+ * @param K_local Local portion of Key cache [T_local x d]
+ * @param V_local Local portion of Value cache [T_local x d]
+ * @param T_local Local sequence length (this rank's portion)
+ * @param T_global Total sequence length (across all ranks)
+ * @param d Hidden dimension
+ * @param num_omp_threads Number of OpenMP threads per rank
+ * @param comm MPI communicator
+ * @return Output vector [1 x d] (only rank 0 has valid result)
+ */
+std::vector<float> naive_attention_mpi(
+    const float* Q_local,
+    const float* K_local,
+    const float* V_local,
+    int T_local,
+    int T_global,
+    int d,
+    int num_omp_threads,
+    MPI_Comm comm
+);
+
+/**
+ * Simplified Naive Attention with MPI (no OpenMP)
+ *
+ * Same as naive_attention_mpi but without internal OpenMP parallelization.
+ *
+ * @param Q_local Query vector [1 x d] (only rank 0 needs valid data)
+ * @param K_local Local portion of Key cache [T_local x d]
+ * @param V_local Local portion of Value cache [T_local x d]
+ * @param T_local Local sequence length (this rank's portion)
+ * @param T_global Total sequence length (across all ranks)
+ * @param d Hidden dimension
+ * @param comm MPI communicator
+ * @return Output vector [1 x d] (only rank 0 has valid result)
+ */
+std::vector<float> naive_attention_mpi_simple(
+    const float* Q_local,
+    const float* K_local,
+    const float* V_local,
+    int T_local,
+    int T_global,
+    int d,
+    MPI_Comm comm
 );
 
 /**
@@ -122,13 +179,6 @@ std::vector<float> streaming_attention_omp_numa(
     int block_size,
     int num_threads = 0
 );
-
-// Forward declaration for MPI_Comm
-// Check if we're including from a file that already included mpi.h
-#if !defined(MPI_COMM_WORLD) && !defined(OMPI_MPI_H) && !defined(MPICH_NAME)
-// No MPI headers included yet, so provide a forward declaration
-typedef void* MPI_Comm;
-#endif
 
 /**
  * Streaming Block Attention (MPI + OpenMP Hybrid)

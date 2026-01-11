@@ -121,8 +121,49 @@ TensorL argmax(const Tensor& input, int dim, bool keepdim) {
 
         std::vector<long> result_data = {static_cast<long>(max_idx)};
         return TensorL(result_data, Shape({1}));
+    } else if (dim == static_cast<int>(input.shape().ndim()) - 1) {
+        // Argmax along last dimension (e.g., [batch, vocab_size] -> [batch])
+        size_t ndim = input.shape().ndim();
+        if (ndim < 2) {
+            throw std::invalid_argument("Argmax along last dim requires at least 2D input");
+        }
+
+        size_t last_dim = input.shape()[ndim - 1];
+        size_t num_samples = 1;
+        for (size_t i = 0; i < ndim - 1; ++i) {
+            num_samples *= input.shape()[i];
+        }
+
+        std::vector<long> result_data(num_samples);
+
+        #pragma omp parallel for if(num_samples > 100)
+        for (size_t s = 0; s < num_samples; ++s) {
+            size_t max_idx = 0;
+            float max_val = input[s * last_dim];
+
+            for (size_t i = 1; i < last_dim; ++i) {
+                if (input[s * last_dim + i] > max_val) {
+                    max_val = input[s * last_dim + i];
+                    max_idx = i;
+                }
+            }
+            result_data[s] = static_cast<long>(max_idx);
+        }
+
+        // Build output shape (same as input except last dimension removed)
+        std::vector<size_t> out_shape_dims;
+        for (size_t i = 0; i < ndim - 1; ++i) {
+            if (keepdim || i < ndim - 2) {
+                out_shape_dims.push_back(input.shape()[i]);
+            }
+        }
+        if (out_shape_dims.empty()) {
+            out_shape_dims.push_back(1);
+        }
+
+        return TensorL(result_data, Shape(out_shape_dims));
     } else {
-        throw std::runtime_error("Argmax along specific dimension not yet implemented");
+        throw std::runtime_error("Argmax along dimensions other than -1 or last is not yet implemented");
     }
 }
 
@@ -169,41 +210,54 @@ Tensor embedding(const TensorL& indices, const Tensor& weight,
 
 Tensor linear(const Tensor& input, const Tensor& weight,
               const Tensor* bias) {
-    if (input.shape().ndim() != 2) {
-        throw std::invalid_argument("Linear only supports 2D input for now");
+    if (input.shape().ndim() < 2) {
+        throw std::invalid_argument("Linear requires at least 2D input");
     }
 
-    size_t batch_size = input.shape()[0];
-    size_t in_features = input.shape()[1];
+    size_t ndim = input.shape().ndim();
+    size_t in_features = input.shape()[ndim - 1];  // Last dimension
     size_t out_features = weight.shape()[0];
 
     if (weight.shape()[1] != in_features) {
         throw std::invalid_argument("Weight shape mismatch in linear layer");
     }
 
-    std::vector<float> output(batch_size * out_features, 0.0f);
+    // Compute total number of "samples" (all dimensions except last)
+    size_t num_samples = 1;
+    for (size_t i = 0; i < ndim - 1; ++i) {
+        num_samples *= input.shape()[i];
+    }
 
-    #pragma omp parallel for if(batch_size * out_features * in_features > 1000)
-    for (size_t b = 0; b < batch_size; ++b) {
+    std::vector<float> output(num_samples * out_features, 0.0f);
+
+    #pragma omp parallel for if(num_samples * out_features * in_features > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
         for (size_t o = 0; o < out_features; ++o) {
             float sum = 0.0f;
             for (size_t i = 0; i < in_features; ++i) {
-                sum += input[b * in_features + i] * weight[o * in_features + i];
+                sum += input[s * in_features + i] * weight[o * in_features + i];
             }
-            output[b * out_features + o] = sum;
+            output[s * out_features + o] = sum;
         }
     }
 
     if (bias != nullptr) {
-        #pragma omp parallel for if(batch_size * out_features > 1000)
-        for (size_t b = 0; b < batch_size; ++b) {
+        #pragma omp parallel for if(num_samples * out_features > 1000)
+        for (size_t s = 0; s < num_samples; ++s) {
             for (size_t o = 0; o < out_features; ++o) {
-                output[b * out_features + o] += (*bias)[o];
+                output[s * out_features + o] += (*bias)[o];
             }
         }
     }
 
-    return Tensor(std::move(output), Shape({batch_size, out_features}));
+    // Build output shape (same as input except last dimension)
+    std::vector<size_t> out_shape_dims;
+    for (size_t i = 0; i < ndim - 1; ++i) {
+        out_shape_dims.push_back(input.shape()[i]);
+    }
+    out_shape_dims.push_back(out_features);
+
+    return Tensor(std::move(output), Shape(out_shape_dims));
 }
 
 // ============================================================================
@@ -212,21 +266,28 @@ Tensor linear(const Tensor& input, const Tensor& weight,
 
 Tensor rms_norm(const Tensor& input, const Tensor* weight,
                 float eps, int dim) {
-    if (input.shape().ndim() != 2) {
-        throw std::invalid_argument("RMS norm only supports 2D input for now");
+    if (input.shape().ndim() < 2) {
+        throw std::invalid_argument("RMS norm requires at least 2D input");
     }
 
-    size_t batch_size = input.shape()[0];
-    size_t hidden_size = input.shape()[1];
+    // Get dimensions
+    size_t ndim = input.shape().ndim();
+    size_t hidden_size = input.shape()[ndim - 1];  // Last dimension
+
+    // Compute total number of "samples" (all dimensions except last)
+    size_t num_samples = 1;
+    for (size_t i = 0; i < ndim - 1; ++i) {
+        num_samples *= input.shape()[i];
+    }
 
     std::vector<float> output(input.size());
 
-    #pragma omp parallel for if(batch_size * hidden_size > 1000)
-    for (size_t b = 0; b < batch_size; ++b) {
+    #pragma omp parallel for if(num_samples * hidden_size > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
         // Compute RMS for this sample
         float mean_square = 0.0f;
         for (size_t i = 0; i < hidden_size; ++i) {
-            float val = input[b * hidden_size + i];
+            float val = input[s * hidden_size + i];
             mean_square += val * val;
         }
         mean_square /= static_cast<float>(hidden_size);
@@ -234,13 +295,13 @@ Tensor rms_norm(const Tensor& input, const Tensor* weight,
 
         // Normalize
         for (size_t i = 0; i < hidden_size; ++i) {
-            output[b * hidden_size + i] = input[b * hidden_size + i] / rms;
+            output[s * hidden_size + i] = input[s * hidden_size + i] / rms;
         }
 
         // Apply gain if provided
         if (weight != nullptr) {
             for (size_t i = 0; i < hidden_size; ++i) {
-                output[b * hidden_size + i] *= (*weight)[i];
+                output[s * hidden_size + i] *= (*weight)[i];
             }
         }
     }

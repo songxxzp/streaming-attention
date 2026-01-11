@@ -120,10 +120,13 @@ public:
 
     Tensor matmul(const Tensor& other) const;
     Tensor transpose() const;
+    Tensor transpose(size_t dim1, size_t dim2) const;
 
     // ========== Shape Manipulations ==========
 
     Tensor reshape(const Shape& new_shape) const;
+    Tensor view(const Shape& new_shape) const;
+    Tensor contiguous() const;
     Tensor squeeze() const;
     Tensor unsqueeze(size_t dim) const;
 

@@ -164,7 +164,7 @@ int main() {
 
     std::vector<float> scores_data = {0.1f, 0.9f, 0.3f, 0.5f};
     TensorF scores(scores_data, Shape({4}));
-    Tensor<long> max_idx = argmax(scores);
+    TensorL max_idx = argmax(scores);
 
     std::cout << "Scores: [0.1, 0.9, 0.3, 0.5]\n";
     std::cout << "Argmax index: " << max_idx[0] << " (expected 1)\n\n";
@@ -180,10 +180,11 @@ int main() {
     TensorF embedding_weight = TensorF::randn(Shape({100, 64}));
 
     // Indices: (batch_size=2, seq_len=10)
-    Tensor<long> indices = Tensor<long>::zeros(Shape({2, 10}));
-    for (size_t i = 0; i < indices.size(); ++i) {
-        indices[i] = static_cast<long>(i % 100);  // Indices 0-9 repeated
+    std::vector<long> indices_data(2 * 10);
+    for (size_t i = 0; i < indices_data.size(); ++i) {
+        indices_data[i] = static_cast<long>(i % 100);  // Indices 0-9 repeated
     }
+    TensorL indices(indices_data, Shape({2, 10}));
 
     TensorF embeddings = embedding(indices, embedding_weight);
 

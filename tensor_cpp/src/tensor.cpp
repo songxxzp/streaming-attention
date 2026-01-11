@@ -220,6 +220,52 @@ Tensor Tensor::transpose() const {
     return Tensor(std::move(result), Shape({cols, rows}));
 }
 
+Tensor Tensor::transpose(size_t dim1, size_t dim2) const {
+    if (dim1 >= ndim() || dim2 >= ndim()) {
+        throw std::out_of_range("Dimension index out of range");
+    }
+
+    std::vector<size_t> new_dims = shape_.dims;
+    std::swap(new_dims[dim1], new_dims[dim2]);
+    Shape new_shape(new_dims);
+
+    std::vector<float> result(data_.size());
+
+    // Compute strides for original and new shapes
+    std::vector<size_t> old_strides(ndim());
+    std::vector<size_t> new_strides(ndim());
+    old_strides[ndim() - 1] = 1;
+    new_strides[ndim() - 1] = 1;
+    for (int i = static_cast<int>(ndim()) - 2; i >= 0; --i) {
+        old_strides[i] = old_strides[i + 1] * shape_[i + 1];
+        new_strides[i] = new_strides[i + 1] * new_dims[i + 1];
+    }
+
+    // Map indices
+    #pragma omp parallel for if(data_.size() > 1000)
+    for (size_t i = 0; i < data_.size(); ++i) {
+        // Convert flat index to multi-index in new layout
+        std::vector<size_t> new_idx(ndim());
+        size_t temp = i;
+        for (size_t d = 0; d < ndim(); ++d) {
+            new_idx[d] = temp / new_strides[d];
+            temp = temp % new_strides[d];
+        }
+
+        // Swap the transposed dimensions
+        std::swap(new_idx[dim1], new_idx[dim2]);
+
+        // Convert back to flat index in original layout
+        size_t old_idx = 0;
+        for (size_t d = 0; d < ndim(); ++d) {
+            old_idx += new_idx[d] * old_strides[d];
+        }
+        result[i] = data_[old_idx];
+    }
+
+    return Tensor(std::move(result), new_shape);
+}
+
 // ========== Shape Manipulations ==========
 
 Tensor Tensor::reshape(const Shape& new_shape) const {
@@ -227,6 +273,16 @@ Tensor Tensor::reshape(const Shape& new_shape) const {
         throw std::invalid_argument("New shape must have same total size");
     }
     return Tensor(data_, new_shape);
+}
+
+Tensor Tensor::view(const Shape& new_shape) const {
+    // Alias for reshape - same semantics
+    return reshape(new_shape);
+}
+
+Tensor Tensor::contiguous() const {
+    // Since our tensor always uses contiguous storage, just return a copy
+    return Tensor(data_, shape_);
 }
 
 Tensor Tensor::squeeze() const {

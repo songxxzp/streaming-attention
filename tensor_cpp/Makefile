@@ -14,7 +14,7 @@ MPIFLAGS = -fopenmp
 MPI_INCLUDES = -I/usr/lib/x86_64-linux-gnu/openmpi/include
 
 # Source files
-SRCS = src/tensor.cpp src/ops.cpp
+SRCS = src/tensor.cpp src/ops.cpp src/qwen3_ops.cpp src/qwen3_loader.cpp
 OBJS = $(SRCS:%.cpp=%.o)
 
 # Test files
@@ -22,6 +22,10 @@ TEST_SRC = tests/test_ops.cpp
 ATTENTION_TEST_SRC = tests/test_attention.cpp
 STREAMING_TEST_SRC = tests/test_streaming_attention.cpp
 TORCH_VALIDATION_SRC = tests/torch_validation.cpp
+QWEN3_TEST_SRC = tests/test_qwen3.cpp
+QWEN3_DECODE_TEST_SRC = tests/test_qwen3_decode.cpp
+QWEN3_GENERATE_TEST_SRC = tests/test_qwen3_generate.cpp
+QWEN3_VERIFY_TEST_SRC = tests/test_qwen3_verify.cpp
 EXAMPLES_SRC = examples/basic_usage.cpp
 
 # Output directories
@@ -29,9 +33,9 @@ BUILD_DIR = build
 RESULTS_DIR = results
 
 # Targets
-.PHONY: all clean test test-attention test-streaming torch-validation examples run run-examples help
+.PHONY: all clean test test-attention test-streaming test-qwen3 test-decode test-generate torch-validation examples run run-examples help
 
-all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/basic_usage
+all: $(BUILD_DIR) $(BUILD_DIR)/test_ops $(BUILD_DIR)/test_attention $(BUILD_DIR)/test_qwen3 $(BUILD_DIR)/test_qwen3_decode $(BUILD_DIR)/test_qwen3_generate $(BUILD_DIR)/test_qwen3_verify $(BUILD_DIR)/basic_usage
 
 # Create build directory
 $(BUILD_DIR):
@@ -85,6 +89,30 @@ $(BUILD_DIR)/basic_usage: $(OBJS) $(EXAMPLES_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(EXAMPLES_SRC)
 	@echo "Built: $@"
 
+# Qwen3 test
+$(BUILD_DIR)/test_qwen3: $(OBJS) $(QWEN3_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_qwen3..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_TEST_SRC)
+	@echo "Built: $@"
+
+# Qwen3 decode test
+$(BUILD_DIR)/test_qwen3_decode: $(OBJS) $(QWEN3_DECODE_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_qwen3_decode..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_DECODE_TEST_SRC)
+	@echo "Built: $@"
+
+# Qwen3 generate test
+$(BUILD_DIR)/test_qwen3_generate: $(OBJS) $(QWEN3_GENERATE_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_qwen3_generate..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_GENERATE_TEST_SRC)
+	@echo "Built: $@"
+
+# Qwen3 verify test
+$(BUILD_DIR)/test_qwen3_verify: $(OBJS) $(QWEN3_VERIFY_TEST_SRC) | $(BUILD_DIR)
+	@echo "Building test_qwen3_verify..."
+	$(CXX) $(CXXFLAGS) $(OMP_FLAGS) $(INCLUDES) -o $@ $(OBJS) $(QWEN3_VERIFY_TEST_SRC)
+	@echo "Built: $@"
+
 # Run tests
 run: $(BUILD_DIR)/test_ops
 	@echo "Running basic tests..."
@@ -116,6 +144,19 @@ test-streaming-mpi: $(BUILD_DIR)/test_streaming_mpi
 	@echo "Running streaming attention tests with MPI (4 processes)..."
 	@mpirun -np 4 ./$(BUILD_DIR)/test_streaming_mpi
 
+# Qwen3 tests
+test-qwen3: $(BUILD_DIR)/test_qwen3
+	@echo "Running Qwen3 tests..."
+	@./$(BUILD_DIR)/test_qwen3
+
+test-decode: $(BUILD_DIR)/test_qwen3_decode
+	@echo "Running Qwen3 decode test..."
+	@./$(BUILD_DIR)/test_qwen3_decode
+
+test-generate: $(BUILD_DIR)/test_qwen3_generate
+	@echo "Running Qwen3 generation test..."
+	@./$(BUILD_DIR)/test_qwen3_generate
+
 # PyTorch validation tests
 torch-validation: $(BUILD_DIR)/torch_validation
 	@echo "Running PyTorch validation tests..."
@@ -137,7 +178,8 @@ run-examples: $(BUILD_DIR)/basic_usage
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR)/*.o $(BUILD_DIR)/test_ops* $(BUILD_DIR)/basic_usage
+	@rm -rf $(BUILD_DIR)/*.o $(BUILD_DIR)/test_ops* $(BUILD_DIR)/test_qwen3* $(BUILD_DIR)/basic_usage
+	@rm -rf src/*.o
 	@echo "Clean complete"
 
 # Help
@@ -154,6 +196,8 @@ help:
 	@echo "  test-attention-mpi - Run attention tests with MPI"
 	@echo "  test-streaming     - Run streaming attention tests"
 	@echo "  test-streaming-mpi - Run streaming attention tests with MPI"
+	@echo "  test-qwen3         - Run Qwen3 model tests"
+	@echo "  test-decode        - Run Qwen3 decode test with tokenizer"
 	@echo "  torch-validation   - Run PyTorch validation tests"
 	@echo "  examples           - Build usage examples"
 	@echo "  run-examples       - Build and run examples"

@@ -31,16 +31,16 @@ except ImportError:
 # 默认配置参数
 # ============================================================================
 
-DEFAULT_SEQ_LENS = [512, 1024, 2048, 4096, 8192]
+DEFAULT_SEQ_LENS = [1024, 2048, 4096, 8192]
 DEFAULT_HIDDEN_DIM = 128
 DEFAULT_WARMUP_RUNS = 2
 DEFAULT_TEST_RUNS = 10
-DEFAULT_BLOCK_SIZES = [32, 64, 128]
-DEFAULT_THREADS_LIST = [1, 2, 4, 8, 16]
-DEFAULT_SEQ_LEN_SCALABILITY = 8192
+DEFAULT_BLOCK_SIZES = [64, 128]
+DEFAULT_THREADS_LIST = [1, 2, 4, 8, 16, 32, 64]
+DEFAULT_SEQ_LEN_SCALABILITY = 4096
 DEFAULT_BASELINE = "serial"
-DEFAULT_MPI_RANKS_LIST = [1, 2, 4]
-DEFAULT_MPI_OMP_THREADS_LIST = [2, 4]
+DEFAULT_MPI_RANKS_LIST = [1, 2, 4, 8]
+DEFAULT_MPI_OMP_THREADS_LIST = [16, 32, 64]
 
 # C++可执行文件默认路径
 DEFAULT_CPP_NAIVE_SERIAL = "./attention/test_naive"
@@ -49,7 +49,7 @@ DEFAULT_CPP_STREAMING_SERIAL = "./attention/test_streaming"
 DEFAULT_CPP_STREAMING_OMP = "./attention/test_streaming_omp"
 DEFAULT_CPP_NAIVE_MPI = "./attention/test_naive_mpi"
 DEFAULT_CPP_STREAMING_MPI = "./attention/test_streaming_mpi"
-DEFAULT_MPIRUN = "/usr/bin/mpirun"
+DEFAULT_MPIRUN = "mpirun"
 
 # ============================================================================
 # PyTorch SDPA测试

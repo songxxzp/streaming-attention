@@ -201,12 +201,12 @@ echo "  OMP_NUM_THREADS=4 ./attention/test_streaming_omp <T> <d> <block_size>"
 echo ""
 if [ "$MPI_AVAILABLE" = "true" ]; then
     echo "  # MPI测试"
-    echo "  $MPIRUN -np 2 ./attention/test_naive_mpi <T> <d> <omp_threads>"
-    echo "  $MPIRUN -np 2 ./attention/test_streaming_mpi <T> <d> <block_size> <omp_threads>"
+    echo "  $mpirun -np 2 ./attention/test_naive_mpi <T> <d> <omp_threads>"
+    echo "  $mpirun -np 2 ./attention/test_streaming_mpi <T> <d> <block_size> <omp_threads>"
 else
     echo "  # MPI测试 (需要可用的MPI编译器)"
-    echo "  $MPIRUN -np 2 ./attention/test_naive_mpi <T> <d> <omp_threads>"
-    echo "  $MPIRUN -np 2 ./attention/test_streaming_mpi <T> <d> <block_size> <omp_threads>"
+    echo "  $mpirun -np 2 ./attention/test_naive_mpi <T> <d> <omp_threads>"
+    echo "  $mpirun -np 2 ./attention/test_streaming_mpi <T> <d> <block_size> <omp_threads>"
 fi
 echo ""
 echo "清理命令:"

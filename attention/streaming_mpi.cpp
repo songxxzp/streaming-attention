@@ -1,5 +1,5 @@
 #include <mpi.h>
-#include "attention/attention.h"
+#include "attention.h"
 #include "../utils/softmax_online.h"
 #include <vector>
 #include <cmath>

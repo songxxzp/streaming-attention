@@ -39,12 +39,17 @@ DEFAULT_BLOCK_SIZE = 64
 DEFAULT_THREADS_LIST = [1, 2, 4, 8, 16]
 DEFAULT_SEQ_LEN_SCALABILITY = 8192
 DEFAULT_BASELINE = "torch"
+DEFAULT_MPI_RANKS_LIST = [1, 2, 4]
+DEFAULT_MPI_OMP_THREADS_LIST = [2, 4]
 
 # C++可执行文件默认路径
 DEFAULT_CPP_NAIVE_SERIAL = "./attention/test_naive"
 DEFAULT_CPP_NAIVE_OMP = "./attention/test_naive_omp"
 DEFAULT_CPP_STREAMING_SERIAL = "./attention/test_streaming"
 DEFAULT_CPP_STREAMING_OMP = "./attention/test_streaming_omp"
+DEFAULT_CPP_NAIVE_MPI = "./attention/test_naive_mpi"
+DEFAULT_CPP_STREAMING_MPI = "./attention/test_streaming_mpi"
+DEFAULT_MPIRUN = "/usr/bin/mpirun"
 
 # ============================================================================
 # PyTorch SDPA测试
@@ -92,7 +97,7 @@ def compile_cpp_executables():
     print("检查C++可执行文件...")
 
     executables = [
-        ("test_naive", "test_streaming.cpp", "naive_serial.cpp", ""),
+        ("test_naive", "test_naive.cpp", "naive_serial.cpp", ""),
         ("test_naive_omp", "test_naive_omp.cpp", "naive_omp.cpp", "-fopenmp"),
         ("test_streaming", "test_streaming.cpp", "streaming_serial.cpp", ""),
         ("test_streaming_omp", "test_streaming_omp.cpp", "streaming_omp.cpp streaming_serial.cpp", "-fopenmp"),
@@ -151,6 +156,49 @@ def test_cpp_attention(seq_len: int, hidden_dim: int, block_size: int,
 
         if times:
             # 使用Python内置方法计算平均值
+            return sum(times) / len(times), True
+        return 0.0, False
+
+    except subprocess.TimeoutExpired:
+        return 0.0, False
+    except FileNotFoundError:
+        return 0.0, False
+    except Exception as e:
+        return 0.0, False
+
+
+def test_cpp_mpi_attention(seq_len: int, hidden_dim: int, block_size: int,
+                           mpi_ranks: int, omp_threads: int,
+                           executable: str, mpirun: str, repeat: int) -> Tuple[float, bool]:
+    """测试C++ MPI Attention性能"""
+    try:
+        env = os.environ.copy()
+        env['OMP_NUM_THREADS'] = str(omp_threads)
+
+        times = []
+        for run in range(repeat):
+            result = subprocess.run(
+                [mpirun, "-np", str(mpi_ranks), executable, str(seq_len), str(hidden_dim), str(block_size), str(omp_threads)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env
+            )
+
+            if result.returncode != 0:
+                return 0.0, False
+
+            # 解析输出
+            for line in result.stdout.split('\n'):
+                if 'Time' in line and 'ms' in line:
+                    try:
+                        time_val = float(line.split()[1])
+                        times.append(time_val)
+                        break
+                    except (IndexError, ValueError):
+                        continue
+
+        if times:
             return sum(times) / len(times), True
         return 0.0, False
 
@@ -257,6 +305,49 @@ def parse_args():
         type=str,
         default=DEFAULT_CPP_STREAMING_OMP,
         help=f"C++ Streaming OpenMP版本可执行文件路径 (默认: {DEFAULT_CPP_STREAMING_OMP})"
+    )
+
+    parser.add_argument(
+        "--cpp-naive-mpi",
+        type=str,
+        default=DEFAULT_CPP_NAIVE_MPI,
+        help=f"C++ Naive MPI版本可执行文件路径 (默认: {DEFAULT_CPP_NAIVE_MPI})"
+    )
+
+    parser.add_argument(
+        "--cpp-streaming-mpi",
+        type=str,
+        default=DEFAULT_CPP_STREAMING_MPI,
+        help=f"C++ Streaming MPI版本可执行文件路径 (默认: {DEFAULT_CPP_STREAMING_MPI})"
+    )
+
+    parser.add_argument(
+        "--mpirun",
+        type=str,
+        default=DEFAULT_MPIRUN,
+        help=f"MPI运行程序路径 (默认: {DEFAULT_MPIRUN})"
+    )
+
+    parser.add_argument(
+        "--mpi-ranks",
+        type=int,
+        nargs="+",
+        default=DEFAULT_MPI_RANKS_LIST,
+        help=f"MPI进程数列表 (默认: {DEFAULT_MPI_RANKS_LIST})"
+    )
+
+    parser.add_argument(
+        "--mpi-omp-threads",
+        type=int,
+        nargs="+",
+        default=DEFAULT_MPI_OMP_THREADS_LIST,
+        help=f"每个MPI进程的OpenMP线程数列表 (默认: {DEFAULT_MPI_OMP_THREADS_LIST})"
+    )
+
+    parser.add_argument(
+        "--enable-mpi",
+        action="store_true",
+        help="启用MPI测试"
     )
 
     return parser.parse_args()
@@ -449,6 +540,80 @@ def run_comparison(args):
     print()
 
     # ============================================================================
+    # MPI测试 (如果启用)
+    # ============================================================================
+    if args.enable_mpi:
+        # ============================================================================
+        # 测试4: Naive MPI扩展性
+        # ============================================================================
+        print("=" * 100)
+        print(f"  测试4: Naive Attention MPI扩展性 (seq_len={args.seqlen_scale})")
+        print("=" * 100)
+        print()
+
+        print("MPI配置         | MPI Ranks | OMP/Rank | 时间 | 吞吐量 | 相对串行加速 | 效率")
+        print("----------------|-----------|----------|---------|-----------------|-------------|------")
+
+        # 获取串行baseline
+        naive_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_naive_serial, 1)
+
+        if naive_serial_time > 0:
+            naive_serial_throughput = args.seqlen_scale * 1000 / naive_serial_time
+            print(f"{'Naive Serial':16s} |     {1:3d}   |    {1:4d}  | {naive_serial_time:7.4f} | {naive_serial_throughput:15.2f} | {1.00:11.2f}x | 1.000")
+
+            # 测试不同的MPI ranks × OMP threads组合
+            for mpi_ranks in args.mpi_ranks:
+                for omp_threads in args.mpi_omp_threads:
+                    time, success = test_cpp_mpi_attention(
+                        args.seqlen_scale, args.dim, args.block_size,
+                        mpi_ranks, omp_threads,
+                        args.cpp_naive_mpi, args.mpirun, 1
+                    )
+                    if success:
+                        throughput = args.seqlen_scale * 1000 / time
+                        total_threads = mpi_ranks * omp_threads
+                        speedup_vs_serial = naive_serial_time / time
+                        efficiency = speedup_vs_serial / total_threads
+                        print(f"{'Naive MPI+OMP':16s} |    {mpi_ranks:3d}   |   {omp_threads:4d}  | {time:7.4f} | {throughput:15.2f} | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
+
+        print()
+
+        # ============================================================================
+        # 测试5: Streaming MPI扩展性
+        # ============================================================================
+        print("=" * 100)
+        print(f"  测试5: Streaming Attention MPI扩展性 (seq_len={args.seqlen_scale})")
+        print("=" * 100)
+        print()
+
+        print("MPI配置            | MPI Ranks | OMP/Rank | 时间 | 吞吐量 | 相对串行加速 | 效率")
+        print("-------------------|-----------|----------|---------|-----------------|-------------|------")
+
+        # 获取串行baseline
+        streaming_serial_time, _ = test_cpp_attention(args.seqlen_scale, args.dim, args.block_size, 1, args.cpp_streaming_serial, 1)
+
+        if streaming_serial_time > 0:
+            streaming_serial_throughput = args.seqlen_scale * 1000 / streaming_serial_time
+            print(f"{'Streaming Serial':19s} |     {1:3d}   |    {1:4d}  | {streaming_serial_time:7.4f} | {streaming_serial_throughput:15.2f} | {1.00:11.2f}x | 1.000")
+
+            # 测试不同的MPI ranks × OMP threads组合
+            for mpi_ranks in args.mpi_ranks:
+                for omp_threads in args.mpi_omp_threads:
+                    time, success = test_cpp_mpi_attention(
+                        args.seqlen_scale, args.dim, args.block_size,
+                        mpi_ranks, omp_threads,
+                        args.cpp_streaming_mpi, args.mpirun, 1
+                    )
+                    if success:
+                        throughput = args.seqlen_scale * 1000 / time
+                        total_threads = mpi_ranks * omp_threads
+                        speedup_vs_serial = streaming_serial_time / time
+                        efficiency = speedup_vs_serial / total_threads
+                        print(f"{'Streaming MPI+OMP':19s} |    {mpi_ranks:3d}   |   {omp_threads:4d}  | {time:7.4f} | {throughput:15.2f} | {speedup_vs_serial:11.2f}x | {efficiency:.3f}")
+
+        print()
+
+    # ============================================================================
     # 总结分析
     # ============================================================================
     print("=" * 100)
@@ -465,12 +630,18 @@ def run_comparison(args):
     print("2. 并行化策略:")
     print("   - Naive OpenMP: 并行化矩阵乘法 (每个线程处理一部分T)")
     print("   - Streaming OpenMP: 并行化block处理 (每个线程处理一部分blocks)")
+    if args.enable_mpi:
+        print("   - MPI: 分布式计算，每个MPI rank处理一部分tokens")
+        print("   - MPI+OpenMP混合: 跨节点(MPI) + 节点内(OpenMP)的两级并行")
     print()
 
     print("3. 性能特点:")
     print("   - PyTorch: 单线程最快（BLAS优化 + SIMD）")
     print("   - Naive OpenMP: 多线程可扩展性好，计算密集型")
     print("   - Streaming OpenMP: 内存友好，适合超长序列")
+    if args.enable_mpi:
+        print("   - MPI: 适合多节点并行，通信开销随ranks增加")
+        print("   - MPI+OpenMP混合: 平衡计算和通信，最优配置需根据硬件调整")
     print()
 
     print("=" * 100)

@@ -57,6 +57,12 @@ target_link_libraries(test_qwen3_verify PRIVATE tensor_cpp)
 add_executable(test_qwen3_logits tests/test_qwen3_logits.cpp)
 target_link_libraries(test_qwen3_logits PRIVATE tensor_cpp)
 
+add_executable(debug_kv_cache tests/debug_kv_cache.cpp)
+target_link_libraries(debug_kv_cache PRIVATE tensor_cpp)
+
+add_executable(debug_cache_data tests/debug_cache_data.cpp)
+target_link_libraries(debug_cache_data PRIVATE tensor_cpp)
+
 add_executable(benchmark_attention tests/benchmark_attention.cpp)
 target_link_libraries(benchmark_attention PRIVATE tensor_cpp)
 

@@ -844,8 +844,24 @@ Tensor qwen3_decoder_layer_with_cache(
 
     // Create causal mask
     size_t total_seq_len = k_final.shape()[2];
-    Tensor causal_mask = create_causal_mask(total_seq_len);
-    Tensor mask = causal_mask.view({1, 1, static_cast<long>(total_seq_len), static_cast<long>(total_seq_len)});
+    size_t q_seq_len = q_rope.shape()[2];  // Query sequence length (1 for decode, full for prefill)
+
+    Tensor mask;
+    if (q_seq_len == 1 && total_seq_len > 1) {
+        // Decode phase: single query token at the end, should attend to all previous tokens
+        // Create mask: [1, 1, 1, total_seq_len] where only positions <= current position are visible
+        std::vector<float> mask_data(total_seq_len);
+        for (size_t j = 0; j < total_seq_len; ++j) {
+            // Last position (total_seq_len - 1) can see all previous positions
+            mask_data[j] = (j <= total_seq_len - 1) ? 0.0f : -std::numeric_limits<float>::infinity();
+        }
+        mask = Tensor(std::move(mask_data), Shape({1, static_cast<long>(total_seq_len)}));
+        mask = mask.view({1, 1, 1, static_cast<long>(total_seq_len)});
+    } else {
+        // Prefill phase: standard causal mask
+        Tensor causal_mask = create_causal_mask(total_seq_len);
+        mask = causal_mask.view({1, 1, static_cast<long>(total_seq_len), static_cast<long>(total_seq_len)});
+    }
 
     // Use self_attention from ops
     Tensor attn_output = ops::self_attention(q_rope, k_repeated, v_repeated, &mask, scale);

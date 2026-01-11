@@ -416,25 +416,27 @@ Tensor self_attention(
 ) {
     size_t batch_size = query.shape()[0];
     size_t num_heads = query.shape()[1];
-    size_t seq_len = query.shape()[2];
+    size_t q_seq_len = query.shape()[2];
+    size_t k_seq_len = key.shape()[2];  // Key sequence length may differ from query!
     size_t head_dim = query.shape()[3];
 
     // Compute attention scores: Q @ K^T
-    std::vector<float> scores(batch_size * num_heads * seq_len * seq_len);
+    // Output shape: [batch, num_heads, q_seq_len, k_seq_len]
+    std::vector<float> scores(batch_size * num_heads * q_seq_len * k_seq_len);
 
-    #pragma omp parallel for if(batch_size * num_heads * seq_len * seq_len > 1000)
+    #pragma omp parallel for if(batch_size * num_heads * q_seq_len * k_seq_len > 1000)
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t h = 0; h < num_heads; ++h) {
-            for (size_t i = 0; i < seq_len; ++i) {
-                for (size_t j = 0; j < seq_len; ++j) {
+            for (size_t i = 0; i < q_seq_len; ++i) {
+                for (size_t j = 0; j < k_seq_len; ++j) {
                     float sum = 0.0f;
                     for (size_t d = 0; d < head_dim; ++d) {
-                        size_t q_idx = ((b * num_heads + h) * seq_len + i) * head_dim + d;
-                        size_t k_idx = ((b * num_heads + h) * seq_len + j) * head_dim + d;
+                        size_t q_idx = ((b * num_heads + h) * q_seq_len + i) * head_dim + d;
+                        size_t k_idx = ((b * num_heads + h) * k_seq_len + j) * head_dim + d;
                         sum += query[q_idx] * key[k_idx];
                     }
 
-                    size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                    size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
                     scores[score_idx] = sum * scale;
                 }
             }
@@ -444,30 +446,30 @@ Tensor self_attention(
     // Apply mask if provided (CRITICAL: must be done before softmax!)
     if (mask != nullptr) {
         const Shape& mask_shape = mask->shape();
-        // mask shape should be [1, 1, seq_len, seq_len] or [seq_len, seq_len]
+        // mask shape should be [1, 1, k_seq_len, k_seq_len] or [k_seq_len, k_seq_len]
         if (mask_shape.ndim() == 4) {
-            // mask: [1, 1, seq_len, seq_len]
-            #pragma omp parallel for if(batch_size * num_heads * seq_len * seq_len > 1000)
+            // mask: [1, 1, k_seq_len, k_seq_len]
+            #pragma omp parallel for if(batch_size * num_heads * q_seq_len * k_seq_len > 1000)
             for (size_t b = 0; b < batch_size; ++b) {
                 for (size_t h = 0; h < num_heads; ++h) {
-                    for (size_t i = 0; i < seq_len; ++i) {
-                        for (size_t j = 0; j < seq_len; ++j) {
-                            size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
-                            size_t mask_idx = i * seq_len + j;  // mask[0, 0, i, j]
+                    for (size_t i = 0; i < q_seq_len; ++i) {
+                        for (size_t j = 0; j < k_seq_len; ++j) {
+                            size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
+                            size_t mask_idx = i * k_seq_len + j;  // mask[i, j] for causal mask
                             scores[score_idx] += (*mask)[mask_idx];
                         }
                     }
                 }
             }
         } else if (mask_shape.ndim() == 2) {
-            // mask: [seq_len, seq_len]
-            #pragma omp parallel for if(batch_size * num_heads * seq_len * seq_len > 1000)
+            // mask: [k_seq_len, k_seq_len]
+            #pragma omp parallel for if(batch_size * num_heads * q_seq_len * k_seq_len > 1000)
             for (size_t b = 0; b < batch_size; ++b) {
                 for (size_t h = 0; h < num_heads; ++h) {
-                    for (size_t i = 0; i < seq_len; ++i) {
-                        for (size_t j = 0; j < seq_len; ++j) {
-                            size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
-                            size_t mask_idx = i * seq_len + j;
+                    for (size_t i = 0; i < q_seq_len; ++i) {
+                        for (size_t j = 0; j < k_seq_len; ++j) {
+                            size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
+                            size_t mask_idx = i * k_seq_len + j;
                             scores[score_idx] += (*mask)[mask_idx];
                         }
                     }
@@ -477,31 +479,31 @@ Tensor self_attention(
     }
 
     // Apply softmax
-    std::vector<float> attn_weights(batch_size * num_heads * seq_len * seq_len);
+    std::vector<float> attn_weights(batch_size * num_heads * q_seq_len * k_seq_len);
 
-    #pragma omp parallel for if(batch_size * num_heads * seq_len > 100)
+    #pragma omp parallel for if(batch_size * num_heads * q_seq_len > 100)
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t h = 0; h < num_heads; ++h) {
-            for (size_t i = 0; i < seq_len; ++i) {
+            for (size_t i = 0; i < q_seq_len; ++i) {
                 // Find max for this row
                 float max_score = -std::numeric_limits<float>::infinity();
-                for (size_t j = 0; j < seq_len; ++j) {
-                    size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                for (size_t j = 0; j < k_seq_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
                     max_score = std::max(max_score, scores[score_idx]);
                 }
 
                 // Compute exp and sum
                 float sum_exp = 0.0f;
-                for (size_t j = 0; j < seq_len; ++j) {
-                    size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                for (size_t j = 0; j < k_seq_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
                     float exp_val = std::exp(scores[score_idx] - max_score);
                     attn_weights[score_idx] = exp_val;
                     sum_exp += exp_val;
                 }
 
                 // Normalize
-                for (size_t j = 0; j < seq_len; ++j) {
-                    size_t score_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
+                for (size_t j = 0; j < k_seq_len; ++j) {
+                    size_t score_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
                     attn_weights[score_idx] /= sum_exp;
                 }
             }
@@ -509,20 +511,22 @@ Tensor self_attention(
     }
 
     // Compute output: attn_weights @ value
-    std::vector<float> output(batch_size * num_heads * seq_len * head_dim);
+    // value shape: [batch, num_heads, k_seq_len, head_dim]
+    // output shape: [batch, num_heads, q_seq_len, head_dim]
+    std::vector<float> output(batch_size * num_heads * q_seq_len * head_dim);
 
-    #pragma omp parallel for if(batch_size * num_heads * seq_len * head_dim > 1000)
+    #pragma omp parallel for if(batch_size * num_heads * q_seq_len * head_dim > 1000)
     for (size_t b = 0; b < batch_size; ++b) {
         for (size_t h = 0; h < num_heads; ++h) {
-            for (size_t i = 0; i < seq_len; ++i) {
+            for (size_t i = 0; i < q_seq_len; ++i) {
                 for (size_t d = 0; d < head_dim; ++d) {
                     float sum = 0.0f;
-                    for (size_t j = 0; j < seq_len; ++j) {
-                        size_t weight_idx = ((b * num_heads + h) * seq_len + i) * seq_len + j;
-                        size_t value_idx = ((b * num_heads + h) * seq_len + j) * head_dim + d;
+                    for (size_t j = 0; j < k_seq_len; ++j) {
+                        size_t weight_idx = ((b * num_heads + h) * q_seq_len + i) * k_seq_len + j;
+                        size_t value_idx = ((b * num_heads + h) * k_seq_len + j) * head_dim + d;
                         sum += attn_weights[weight_idx] * value[value_idx];
                     }
-                    size_t out_idx = ((b * num_heads + h) * seq_len + i) * head_dim + d;
+                    size_t out_idx = ((b * num_heads + h) * q_seq_len + i) * head_dim + d;
                     output[out_idx] = sum;
                 }
             }

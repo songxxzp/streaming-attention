@@ -63,29 +63,67 @@ echo ""
 echo "Part 2: Qwen3模型快速测试"
 echo "=================================================="
 
-MODEL_PATH="/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors"
+# 查找模型文件
+MODEL_PATH=""
+
+# 常见模型路径
+POSSIBLE_PATHS=(
+    "/student/2025310707/Qwen3-0.6B/model.safetensors"
+    "/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors"
+    "/home/$(whoami)/checkpoints/Qwen3-0.6B/model.safetensors"
+    "/home/$(whoami)/models/Qwen3-0.6B/model.safetensors"
+    "~/checkpoints/Qwen3-0.6B/model.safetensors"
+    "./models/Qwen3-0.6B/model.safetensors"
+)
+
+for path in "${POSSIBLE_PATHS[@]}"; do
+    expanded_path="${path/#\~/$HOME}"
+    if [ -f "$expanded_path" ]; then
+        MODEL_PATH="$expanded_path"
+        break
+    fi
+done
+
+if [ -z "$MODEL_PATH" ]; then
+    echo "⚠ 警告: 未找到Qwen3模型文件"
+    echo "  请指定模型路径:"
+    echo "  export MODEL_PATH=/path/to/Qwen3-0.6B/model.safetensors"
+    echo "  或修改脚本中的MODEL_PATH变量"
+    echo ""
+    echo "  跳过Qwen3测试..."
+else
+    echo "✓ 找到模型: $MODEL_PATH"
+fi
 
 echo ""
 echo "2.1 Prefill阶段 (prompt_len=16, threads=4)..."
-OMP_NUM_THREADS=4 ./build/benchmark_qwen3 \
-    --model "$MODEL_PATH" \
-    --phase prefill \
-    --prompt-len 16 \
-    --iters 3 \
-    --threads 4 \
-    > "$RESULTS_DIR/qwen3_prefill_quick.txt" 2>&1
-echo "  ✓ 完成"
+if [ -n "$MODEL_PATH" ]; then
+    OMP_NUM_THREADS=4 ./build/benchmark_qwen3 \
+        --model "$MODEL_PATH" \
+        --phase prefill \
+        --prompt-len 16 \
+        --iters 3 \
+        --threads 4 \
+        > "$RESULTS_DIR/qwen3_prefill_quick.txt" 2>&1
+    echo "  ✓ 完成"
+else
+    echo "  ⊗ 跳过（未找到模型文件）"
+fi
 
 echo ""
 echo "2.2 Decode阶段 (gen_len=10, threads=4)..."
-OMP_NUM_THREADS=4 ./build/benchmark_qwen3 \
-    --model "$MODEL_PATH" \
-    --phase decode \
-    --gen-len 10 \
-    --iters 1 \
-    --threads 4 \
-    > "$RESULTS_DIR/qwen3_decode_quick.txt" 2>&1
-echo "  ✓ 完成"
+if [ -n "$MODEL_PATH" ]; then
+    OMP_NUM_THREADS=4 ./build/benchmark_qwen3 \
+        --model "$MODEL_PATH" \
+        --phase decode \
+        --gen-len 10 \
+        --iters 1 \
+        --threads 4 \
+        > "$RESULTS_DIR/qwen3_decode_quick.txt" 2>&1
+    echo "  ✓ 完成"
+else
+    echo "  ⊗ 跳过（未找到模型文件）"
+fi
 
 # ====================================================================
 # Part 3: 生成快速对比报告

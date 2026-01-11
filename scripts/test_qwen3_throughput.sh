@@ -7,7 +7,35 @@
 set -e
 
 # 配置参数
-MODEL_PATH=${1:-"/path/to/model.safetensors"}
+# 如果没有提供模型路径，自动查找
+if [ -z "$1" ]; then
+    POSSIBLE_PATHS=(
+        "/student/2025310707/Qwen3-0.6B/model.safetensors"
+        "/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors"
+        "/home/$(whoami)/checkpoints/Qwen3-0.6B/model.safetensors"
+        "~/checkpoints/Qwen3-0.6B/model.safetensors"
+        "./models/Qwen3-0.6B/model.safetensors"
+    )
+
+    for path in "${POSSIBLE_PATHS[@]}"; do
+        expanded_path="${path/#\~/$HOME}"
+        if [ -f "$expanded_path" ]; then
+            MODEL_PATH="$expanded_path"
+            break
+        fi
+    done
+
+    if [ -z "$MODEL_PATH" ]; then
+        echo "✗ 错误: 未找到Qwen3模型文件"
+        echo ""
+        echo "用法: $0 <model_path>"
+        echo "示例: $0 /path/to/Qwen3-0.6B/model.safetensors"
+        exit 1
+    fi
+else
+    MODEL_PATH="$1"
+fi
+
 PREFILL_LEN=4096      # Prefill阶段长度
 DECODE_LEN=1024       # Decode阶段生成长度
 ITERS=5               # 每个配置的迭代次数
@@ -18,7 +46,7 @@ THREADS_LIST=(1 2 4 8 16 26 52 104 208 416)
 
 # 路径配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="/media/song/LocalDisk/Weblearning/并行计算/final/tensor_cpp"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")/tensor_cpp"
 RESULTS_DIR="$PROJECT_DIR/results/qwen3_throughput_$(date +%Y%m%d_%H%M%S)"
 
 # 创建结果目录
@@ -56,10 +84,13 @@ fi
 
 BINARY="$PROJECT_DIR/build/benchmark_qwen3"
 
+# 设置运行环境
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
 # ============================================================================
 # 1. Prefill阶段测试 (串行)
 # ============================================================================
-echo "[1/2] 测试Prefill阶段 (串行)..."
+echo "[1/4] 测试Prefill阶段 (串行)..."
 echo ""
 
 LOG_FILE="$RESULTS_DIR/prefill_serial_log.txt"

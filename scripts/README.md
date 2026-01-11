@@ -14,7 +14,7 @@
 ## 脚本列表
 
 ### 1. `build_on_server.sh`
-服务器编译脚本，自动加载模块并编译所有测试程序。
+服务器编译脚本，使用CMake自动加载模块并编译所有测试程序。
 
 ```bash
 ./build_on_server.sh
@@ -22,9 +22,15 @@
 
 **功能**:
 - 自动加载spack模块 (cmake, openmpi)
-- 检查编译器版本
-- 清理旧构建
-- 编译所有测试程序
+- 使用CMake配置和编译（参考nbody项目）
+- 自动检测MPI和OpenMP
+- 生成运行环境配置文件 `tensor_cpp/set_env.sh`
+
+**编译方式**:
+- 使用CMake替代Makefile
+- CMake自动查找MPI: `find_package(MPI REQUIRED)`
+- CMake自动查找OpenMP: `find_package(OpenMP REQUIRED)`
+- 生成的可执行文件在 `tensor_cpp/build/` 目录
 
 ### 2. `test_attention_scalability.sh`
 Attention算子性能扩展性测试，测试串行、OpenMP和MPI+OpenMP三种模式。
@@ -83,6 +89,16 @@ cd /media/song/LocalDisk/Weblearning/并行计算/final/scripts
 ./build_on_server.sh
 ```
 
+编译完成后，设置运行环境（可选）：
+
+```bash
+source /media/song/LocalDisk/Weblearning/并行计算/final/tensor_cpp/set_env.sh
+```
+
+这个脚本会设置：
+- `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH`
+- `OMP_NUM_THREADS=16` (可通过环境变量覆盖)
+
 ### 步骤2: 运行Attention测试
 
 ```bash
@@ -101,6 +117,22 @@ cd /media/song/LocalDisk/Weblearning/并行计算/final/scripts
 ```
 
 ## 服务器运行注意事项
+
+### 编译方式
+
+项目现在使用 **CMake** 而非Makefile进行编译（参考nbody项目）：
+
+```bash
+cd tensor_cpp/build
+cmake .. -DCMAKE_CXX_COMPILER=/usr/bin/c++ -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+```
+
+**为什么使用CMake？**
+- CMake通过`find_package(MPI REQUIRED)`自动查找MPI
+- CMake通过`find_package(OpenMP REQUIRED)`自动查找OpenMP
+- 避免硬编码MPI路径（如`/usr/bin/mpicxx`可能不存在）
+- 与nbody项目保持一致
 
 ### 模块加载
 
@@ -123,27 +155,33 @@ export OMP_NUM_THREADS=16
 
 Attention测试使用原始attention项目的MPI版本：
 ```bash
-/usr/bin/mpirun -np 16 ./streaming_mpi
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+mpirun -np 16 ./streaming_mpi
 ```
 
-**重要**: 使用`/usr/bin/mpirun`（系统OpenMPI），而非Anaconda的MPICH。
+**重要**:
+- 使用`/usr/bin/mpirun`（系统OpenMPI），而非Anaconda的MPICH
+- 必须设置 `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH`
+- 这是nbody项目的运行方式，确保MPI库能被找到
 
 ### SLURM作业调度
 
-如果使用SLURM提交作业，修改脚本添加`srun`前缀：
+如果使用SLURM提交作业，修改脚本添加`srun`前置和环境变量：
 
 ```bash
 # 单节点OpenMP
 srun -p student --ntasks=1 --cpus-per-task=16 \
-    env OMP_NUM_THREADS=16 ./build/benchmark_qwen3 \
+    env LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+    OMP_NUM_THREADS=16 ./build/benchmark_qwen3 \
     --model $MODEL_PATH --phase prefill --prompt-len 4096
 
-# 多节点MPI+OpenMP
+# 多节点MPI+OpenMP (使用原始attention项目)
 srun --mpi=pmix -p student \
     -N 2 --ntasks=8 --ntasks-per-node=4 \
     --cpus-per-task=26 \
-    env OMP_NUM_THREADS=26 \
-    /usr/bin/mpirun -np 8 ./streaming_mpi
+    env LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+    OMP_NUM_THREADS=26 \
+    mpirun -np 8 ./streaming_mpi
 ```
 
 ## 性能指标说明

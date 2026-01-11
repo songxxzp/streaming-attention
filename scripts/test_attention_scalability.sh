@@ -14,7 +14,7 @@ ITERS=10             # 每个配置的迭代次数
 
 # 路径配置
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="/media/song/LocalDisk/Weblearning/并行计算/final"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ATTENTION_DIR="$PROJECT_DIR/attention"
 TENSOR_CPP_DIR="$PROJECT_DIR/tensor_cpp"
 RESULTS_DIR="$PROJECT_DIR/results/attention_scalability_$(date +%Y%m%d_%H%M%S)"

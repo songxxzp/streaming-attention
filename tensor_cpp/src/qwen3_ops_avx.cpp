@@ -63,8 +63,10 @@ Tensor qwen3_attention_avx(
     Tensor v = v_reshaped.transpose(1, 2);
 
     // ========== QKNorm: Apply RMS normalization to Q and K per-head ==========
-    const float* q_norm_data = q_norm_weight.data();
-    const float* k_norm_data = k_norm_weight.data();
+    const float* q_norm_weight_data = q_norm_weight.data();
+    const float* k_norm_weight_data = k_norm_weight.data();
+    const float* q_data = q.data();
+    const float* k_data = k.data();
 
     size_t q_total_elements = batch * q_total_heads * seq_len * head_dim;
     std::vector<float> q_normed_data(q_total_elements);
@@ -78,14 +80,14 @@ Tensor qwen3_attention_avx(
                 // Compute RMS: sqrt(mean(x^2))
                 float sum_sq = 0.0f;
                 for (size_t d = 0; d < head_dim; ++d) {
-                    float val = q[base_idx + d];
+                    float val = q_data[base_idx + d];
                     sum_sq += val * val;
                 }
                 float rms = std::sqrt(sum_sq / static_cast<float>(head_dim)) + 1e-6f;
 
                 // Normalize: x / RMS * weight
                 for (size_t d = 0; d < head_dim; ++d) {
-                    q_normed_data[base_idx + d] = (q[base_idx + d] / rms) * q_norm_data[d];
+                    q_normed_data[base_idx + d] = (q_data[base_idx + d] / rms) * q_norm_weight_data[d];
                 }
             }
         }
@@ -103,13 +105,13 @@ Tensor qwen3_attention_avx(
 
                 float sum_sq = 0.0f;
                 for (size_t d = 0; d < head_dim; ++d) {
-                    float val = k[base_idx + d];
+                    float val = k_data[base_idx + d];
                     sum_sq += val * val;
                 }
                 float rms = std::sqrt(sum_sq / static_cast<float>(head_dim)) + 1e-6f;
 
                 for (size_t d = 0; d < head_dim; ++d) {
-                    k_normed_data[base_idx + d] = (k[base_idx + d] / rms) * k_norm_data[d];
+                    k_normed_data[base_idx + d] = (k_data[base_idx + d] / rms) * k_norm_weight_data[d];
                 }
             }
         }
@@ -161,6 +163,10 @@ Tensor qwen3_mlp_avx_internal(
     size_t hidden_size = hidden_shape[2];
     size_t intermediate_size = gate_proj.shape()[0];
 
+    const float* hidden_data = hidden_states.data();
+    const float* gate_proj_data = gate_proj.data();
+    const float* up_proj_data = up_proj.data();
+
     // Gate projection with AVX2
     size_t gate_data_size = batch * seq_len * intermediate_size;
     std::vector<float> gate_data(gate_data_size);
@@ -178,8 +184,8 @@ Tensor qwen3_mlp_avx_internal(
 
                 __m256 sum_vec = _mm256_setzero_ps();
                 for (; j + 8 <= hidden_size; j += 8) {
-                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_states[input_offset + j]);
-                    __m256 weight_vec = _mm256_loadu_ps(&gate_proj[weight_offset + j]);
+                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_data[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&gate_proj_data[weight_offset + j]);
                     sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
                 }
 
@@ -196,7 +202,7 @@ Tensor qwen3_mlp_avx_internal(
                 sum = _mm_cvtss_f32(sum_128);
 
                 for (; j < hidden_size; ++j) {
-                    sum += hidden_states[input_offset + j] * gate_proj[weight_offset + j];
+                    sum += hidden_data[input_offset + j] * gate_proj_data[weight_offset + j];
                 }
 
                 gate_data[row_offset + i] = sum;
@@ -223,8 +229,8 @@ Tensor qwen3_mlp_avx_internal(
 
                 __m256 sum_vec = _mm256_setzero_ps();
                 for (; j + 8 <= hidden_size; j += 8) {
-                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_states[input_offset + j]);
-                    __m256 weight_vec = _mm256_loadu_ps(&up_proj[weight_offset + j]);
+                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_data[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&up_proj_data[weight_offset + j]);
                     sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
                 }
 
@@ -240,7 +246,7 @@ Tensor qwen3_mlp_avx_internal(
                 sum = _mm_cvtss_f32(sum_128);
 
                 for (; j < hidden_size; ++j) {
-                    sum += hidden_states[input_offset + j] * up_proj[weight_offset + j];
+                    sum += hidden_data[input_offset + j] * up_proj_data[weight_offset + j];
                 }
 
                 up_data[row_offset + i] = sum;
@@ -256,31 +262,22 @@ Tensor qwen3_mlp_avx_internal(
     // and the loop structure is not thread-safe
     std::vector<float> swiglu_data(batch * seq_len * intermediate_size);
 
-    for (size_t i = 0; i + 8 <= batch * seq_len * intermediate_size; i += 8) {
-        __m256 gate_vec = _mm256_loadu_ps(&gate[i]);
-        __m256 up_vec = _mm256_loadu_ps(&up[i]);
+    const float* gate_tensor_data = gate.data();
+    const float* up_tensor_data = up.data();
 
-        // Fast sigmoid approximation
-        __m256 sign_mask = _mm256_set1_ps(-0.0f);
-        __m256 abs_up = _mm256_andnot_ps(sign_mask, up_vec);
-        __m256 ones = _mm256_set1_ps(1.0f);
-        __m256 sigmoid = _mm256_div_ps(up_vec, _mm256_add_ps(abs_up, ones));
-
-        __m256 result = _mm256_mul_ps(gate_vec, sigmoid);
-        _mm256_storeu_ps(&swiglu_data[i], result);
-    }
-
-    // Handle remaining elements
-    for (size_t i = (batch * seq_len * intermediate_size / 8) * 8; i < batch * seq_len * intermediate_size; ++i) {
-        float up_val = up[i];
-        float sigmoid_val = up_val / (1.0f + std::abs(up_val));
-        swiglu_data[i] = gate[i] * sigmoid_val;
+    for (size_t i = 0; i < batch * seq_len * intermediate_size; ++i) {
+        float gate_val = gate_tensor_data[i];
+        // SiLU(gate) = gate * sigmoid(gate) = gate / (1 + exp(-gate))
+        float silu_val = gate_val * (1.0f / (1.0f + std::exp(-gate_val)));
+        swiglu_data[i] = silu_val * up_tensor_data[i];
     }
 
     Tensor swiglu(std::move(swiglu_data), gate.shape());
 
     // Down projection with AVX2
     std::vector<float> output_data(batch * seq_len * hidden_size);
+    const float* swiglu_data_ptr = swiglu.data();
+    const float* down_proj_data = down_proj.data();
 
     #pragma omp parallel for if(batch * seq_len * hidden_size > 1000)
     for (size_t b = 0; b < batch; ++b) {
@@ -295,8 +292,8 @@ Tensor qwen3_mlp_avx_internal(
 
                 __m256 sum_vec = _mm256_setzero_ps();
                 for (; j + 8 <= intermediate_size; j += 8) {
-                    __m256 swiglu_vec = _mm256_loadu_ps(&swiglu[input_offset + j]);
-                    __m256 weight_vec = _mm256_loadu_ps(&down_proj[weight_offset + j]);
+                    __m256 swiglu_vec = _mm256_loadu_ps(&swiglu_data_ptr[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&down_proj_data[weight_offset + j]);
                     sum_vec = _mm256_fmadd_ps(swiglu_vec, weight_vec, sum_vec);
                 }
 
@@ -312,7 +309,7 @@ Tensor qwen3_mlp_avx_internal(
                 sum = _mm_cvtss_f32(sum_128);
 
                 for (; j < intermediate_size; ++j) {
-                    sum += swiglu[input_offset + j] * down_proj[weight_offset + j];
+                    sum += swiglu_data_ptr[input_offset + j] * down_proj_data[weight_offset + j];
                 }
 
                 output_data[row_offset + i] = sum;
@@ -399,7 +396,7 @@ Tensor qwen3_forward_avx(
 
     // Compute RoPE frequencies
     size_t seq_len = input_ids.shape()[1];
-    auto rope_freqs = compute_rope_freqs(seq_len, head_dim);
+    auto rope_freqs = compute_rope_freqs(seq_len, head_dim, 1000000.0f);
     Tensor cos = rope_freqs.first;
     Tensor sin = rope_freqs.second;
 
@@ -742,7 +739,7 @@ Tensor qwen3_forward_avx_with_cache(
 
     // Compute RoPE frequencies
     size_t seq_len = input_ids.shape()[1];
-    auto rope_freqs = compute_rope_freqs(seq_len, head_dim);
+    auto rope_freqs = compute_rope_freqs(seq_len, head_dim, 1000000.0f);
     Tensor cos = rope_freqs.first;
     Tensor sin = rope_freqs.second;
 

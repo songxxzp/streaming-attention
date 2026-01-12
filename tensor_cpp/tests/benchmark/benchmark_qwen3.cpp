@@ -573,6 +573,98 @@ void benchmark_compare_kv_cache(const BenchmarkConfig& cfg, const Qwen3Weights& 
     std::cout << "============================================================\n\n";
 }
 
+// 简单的decode生成演示（用于verify模式）
+void demo_decode_generation(
+    const std::vector<long>& prompt_ids,
+    const Qwen3Weights& weights,
+    const std::string& method,
+    int gen_len
+) {
+    using namespace tensor_cpp::ops;
+
+    std::cout << "\n  >>> Decode Generation Demo (" << get_method_name(method) << ") <<<\n";
+    std::cout << "  Prompt tokens: [";
+    for (size_t i = 0; i < std::min(prompt_ids.size(), size_t(10)); ++i) {
+        std::cout << prompt_ids[i];
+        if (i < prompt_ids.size() - 1) std::cout << ", ";
+    }
+    if (prompt_ids.size() > 10) std::cout << "...";
+    std::cout << "] (" << prompt_ids.size() << " tokens)\n";
+
+    // 创建KV cache
+    auto kv_cache = std::make_unique<KVCache>(
+        weights.num_layers, 1, weights.num_key_value_heads,
+        weights.head_dim, 4096
+    );
+
+    // 生成tokens
+    std::vector<long> generated = prompt_ids;
+    std::cout << "  Generating " << gen_len << " tokens...\n";
+
+    for (int step = 0; step < gen_len; ++step) {
+        // 准备输入
+        Shape input_shape({1, static_cast<long>(generated.size())});
+        TensorL input(generated, input_shape);
+
+        // Forward pass
+        Tensor output;
+        if (method == "baseline") {
+            output = qwen3::qwen3_forward_with_cache(
+                input, kv_cache.get(), weights.embed_tokens, weights.layers,
+                weights.norm_weight, weights.num_layers,
+                weights.num_attention_heads, weights.num_key_value_heads,
+                weights.head_dim, 1e-6f
+            );
+        } else if (method == "avx2") {
+            output = avx2::qwen3_forward_avx_with_cache(
+                input, kv_cache.get(), weights.embed_tokens, weights.layers,
+                weights.norm_weight, weights.num_layers,
+                weights.num_attention_heads, weights.num_key_value_heads,
+                weights.head_dim, 1e-6f
+            );
+        } else {
+            std::cout << "  Unknown method: " << method << "\n";
+            return;
+        }
+
+        // Sample next token (argmax)
+        // output shape: [1, seq_len, vocab_size]
+        // Get last position's logits
+        size_t vocab_size = weights.vocab_size;
+        size_t last_pos = generated.size() - 1;
+        const float* logits = output.data() + last_pos * vocab_size;
+
+        // Find argmax
+        float max_logit = logits[0];
+        long max_idx = 0;
+        for (size_t i = 1; i < vocab_size; ++i) {
+            if (logits[i] > max_logit) {
+                max_logit = logits[i];
+                max_idx = static_cast<long>(i);
+            }
+        }
+
+        generated.push_back(max_idx);
+
+        // 每10个token输出一次进度
+        if ((step + 1) % 10 == 0 || step == gen_len - 1) {
+            std::cout << "    Step " << (step + 1) << "/" << gen_len
+                      << ": Generated token " << max_idx
+                      << " (logit=" << max_logit << ")\n";
+        }
+    }
+
+    std::cout << "  Generated tokens: [";
+    for (size_t i = prompt_ids.size(); i < std::min(generated.size(), prompt_ids.size() + 10); ++i) {
+        std::cout << generated[i];
+        if (i < generated.size() - 1) std::cout << ", ";
+    }
+    if (generated.size() > prompt_ids.size() + 10) std::cout << "...";
+    std::cout << "]\n";
+    std::cout << "  Total tokens: " << generated.size() << " (prompt: " << prompt_ids.size()
+              << ", generated: " << gen_len << ")\n";
+}
+
 // 验证模式：检查输出正确性
 void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "\n";
@@ -721,6 +813,30 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
             }
         }
     }
+
+    // Decode生成演示（展示模型实际生成的内容）
+    std::cout << "\n";
+    std::cout << "============================================================\n";
+    std::cout << "     Decode Generation Demo\n";
+    std::cout << "============================================================\n";
+    std::cout << "Running decode generation to show actual model output...\n";
+    std::cout << "Using prompt tokens from input text...\n\n";
+
+    // 使用prompt的前几个token进行演示（避免太长）
+    std::vector<long> demo_prompt_ids = input_ids;
+    if (demo_prompt_ids.size() > 10) {
+        demo_prompt_ids.resize(10);  // 只用前10个token
+    }
+
+    // 演示baseline和AVX2的生成（只生成10个token，避免太慢）
+    demo_decode_generation(demo_prompt_ids, weights, "baseline", 10);
+    std::cout << "\n";
+    demo_decode_generation(demo_prompt_ids, weights, "avx2", 10);
+
+    std::cout << "\n============================================================\n";
+    std::cout << "Note: This demo uses greedy decoding (argmax) and ASCII token IDs.\n";
+    std::cout << "      For proper text generation, use a tokenizer.\n";
+    std::cout << "============================================================\n\n";
 
     // 最终结果
     std::cout << "\n";

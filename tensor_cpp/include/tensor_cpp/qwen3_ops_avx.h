@@ -1,79 +1,54 @@
 /**
- * @file qwen3_ops_avx.h
- * @brief AVX2-optimized Qwen3 operators
- *
- * Implements AVX SIMD accelerated versions of Qwen3 operators
+ * @file qwen3_ops_avx_v2.h
+ * @brief AVX2-optimized Qwen3 operators with pre-extracted QKV projections
  */
 
-#ifndef TENSOR_CPP_QWEN3_OPS_AVX_H
-#define TENSOR_CPP_QWEN3_OPS_AVX_H
+#ifndef TENSOR_CPP_QWEN3_OPS_AVX_V2_H
+#define TENSOR_CPP_QWEN3_OPS_AVX_V2_H
 
 #include "tensor_cpp/tensor.h"
 #include "tensor_cpp/qwen3_ops.h"
-#include "tensor_cpp/ops_avx.h"
+#include <string>
 #include <vector>
 
 namespace tensor_cpp {
 namespace qwen3 {
-namespace avx2 {
-
-// ============================================================================
-// Qwen3 MLP (SwiGLU) with AVX2
-// ============================================================================
+namespace avx2_v2 {
 
 /**
- * @brief Qwen3 MLP layer with AVX2 optimization
+ * @brief AVX2-optimized Qwen3 attention with pre-extracted QKV projections
  *
- * Optimized SwiGLU MLP using AVX2 SIMD instructions
- *
- * @param hidden_states Input [batch, seq_len, hidden_size]
- * @param gate_proj Gate projection weight [intermediate_size, hidden_size]
- * @param up_proj Up projection weight [intermediate_size, hidden_size]
- * @param down_proj Down projection weight [hidden_size, intermediate_size]
- * @return Output [batch, seq_len, hidden_size]
+ * Uses pre-extracted q_proj, k_proj, v_proj to avoid repeated matrix copying.
+ * All dot products use AVX2 instructions.
  */
-Tensor qwen3_mlp_avx(
+Tensor qwen3_attention_avx_v2(
     const Tensor& hidden_states,
-    const Tensor& gate_proj,
-    const Tensor& up_proj,
-    const Tensor& down_proj
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    const Tensor& q_proj,
+    const Tensor& k_proj,
+    const Tensor& v_proj,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& cos,
+    const Tensor& sin
 );
 
-// ============================================================================
-// Qwen3 Decoder Layer with AVX2
-// ============================================================================
-
 /**
- * @brief Qwen3 decoder layer with AVX2 optimization
- *
- * Complete decoder layer with AVX2-optimized MLP
- *
- * @param hidden_states Input [batch, seq_len, hidden_size]
- * @param num_attention_heads Number of attention heads
- * @param num_key_value_heads Number of KV heads
- * @param head_dim Head dimension
- * @param rms_norm_eps RMS norm epsilon
- * @param input_layernorm_weight Input layer norm weight
- * @param qkv_projs Combined QKV projection weights
- * @param o_proj Output projection weight
- * @param q_norm_weight Q normalization weight
- * @param k_norm_weight K normalization weight
- * @param post_attention_layernorm_weight Post attention layer norm weight
- * @param gate_mlp MLP gate projection weight
- * @param up_mlp MLP up projection weight
- * @param down_mlp MLP down projection weight
- * @param cos RoPE cosine values
- * @param sin RoPE sine values
- * @return Output tensor [batch, seq_len, hidden_size]
+ * @brief AVX2-optimized Qwen3 decoder layer with pre-extracted QKV
  */
-Tensor qwen3_decoder_layer_avx(
+Tensor qwen3_decoder_layer_avx_v2(
     const Tensor& hidden_states,
     size_t num_attention_heads,
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
     const Tensor& input_layernorm_weight,
-    const Tensor& qkv_projs,
+    const Tensor& q_proj,
+    const Tensor& k_proj,
+    const Tensor& v_proj,
     const Tensor& o_proj,
     const Tensor& q_norm_weight,
     const Tensor& k_norm_weight,
@@ -85,25 +60,10 @@ Tensor qwen3_decoder_layer_avx(
     const Tensor& sin
 );
 
-// ============================================================================
-// Qwen3 Model (Full Forward Pass) with AVX2
-// ============================================================================
-
 /**
- * @brief Complete Qwen3 model forward pass with AVX2 optimization
- *
- * @param input_ids Input token IDs [batch_size, seq_len]
- * @param token_embedding Word embedding weight [vocab_size, hidden_size]
- * @param layers List of decoder layer weights
- * @param norm_weight Final layer norm weight
- * @param num_layers Number of layers
- * @param num_attention_heads Number of attention heads
- * @param num_key_value_heads Number of KV heads
- * @param head_dim Head dimension
- * @param rms_norm_eps RMS norm epsilon
- * @return Hidden states [batch_size, seq_len, hidden_size]
+ * @brief Complete AVX2-optimized Qwen3 forward pass with pre-extracted QKV
  */
-Tensor qwen3_forward_avx(
+Tensor qwen3_forward_avx_v2(
     const TensorL& input_ids,
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
@@ -115,8 +75,8 @@ Tensor qwen3_forward_avx(
     float rms_norm_eps
 );
 
-} // namespace avx2
+} // namespace avx2_v2
 } // namespace qwen3
 } // namespace tensor_cpp
 
-#endif // TENSOR_CPP_QWEN3_OPS_AVX_H
+#endif // TENSOR_CPP_QWEN3_OPS_AVX_V2_H

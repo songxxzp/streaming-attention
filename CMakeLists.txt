@@ -24,26 +24,28 @@ add_executable(test_correctness
 )
 
 # Phase 2: OpenMP version (to be implemented)
-if(OpenMP_CXX_FOUND)
-    add_executable(test_omp
-        test_omp.cpp
-        attention/naive_serial.cpp
-        attention/streaming_serial.cpp
-        attention/streaming_omp.cpp
-    )
-    target_link_libraries(test_omp OpenMP::OpenMP_CXX)
-endif()
+# Disabled - test_omp.cpp not found
+# if(OpenMP_CXX_FOUND)
+#     add_executable(test_omp
+#         test_omp.cpp
+#         attention/naive_serial.cpp
+#         attention/streaming_serial.cpp
+#         attention/streaming_omp.cpp
+#     )
+#     target_link_libraries(test_omp OpenMP::OpenMP_CXX)
+# endif()
 
 # Phase 3: MPI + OpenMP version (to be implemented)
-if(MPI_FOUND)
-    add_executable(test_mpi
-        test_mpi.cpp
-        attention/naive_serial.cpp
-        attention/streaming_serial.cpp
-        attention/streaming_mpi.cpp
-    )
-    target_link_libraries(test_mpi MPI::MPI_CXX)
-    if(OpenMP_CXX_FOUND)
-        target_link_libraries(test_mpi OpenMP::OpenMP_CXX)
-    endif()
-endif()
+# Disabled - test_mpi.cpp not found
+# if(MPI_FOUND)
+#     add_executable(test_mpi
+#         test_mpi.cpp
+#         attention/naive_serial.cpp
+#         attention/streaming_serial.cpp
+#         attention/streaming_mpi.cpp
+#     )
+#     target_link_libraries(test_mpi MPI::MPI_CXX)
+#     if(OpenMP_CXX_FOUND)
+#         target_link_libraries(test_mpi OpenMP::OpenMP_CXX)
+#     endif()
+# endif()

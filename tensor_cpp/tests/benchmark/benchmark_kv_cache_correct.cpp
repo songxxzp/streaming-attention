@@ -123,9 +123,10 @@ double benchmark_without_cache(
 double benchmark_with_cache(
     const TensorL& initial_input,
     Qwen3Weights& weights,
-    int total_tokens
+    int total_tokens,
+    bool use_avx = false
 ) {
-    std::cout << "  WITH KV CACHE (only compute new tokens):\n";
+    std::cout << "  WITH KV CACHE" << (use_avx ? " + AVX2" : "") << " (only compute new tokens):\n";
 
     Timer total_timer;
 
@@ -140,18 +141,34 @@ double benchmark_with_cache(
 
     // Initial forward pass with cache
     Timer timer;
-    Tensor output = qwen3::qwen3_forward_with_cache(
-        initial_input,
-        &kv_cache,
-        weights.embed_tokens,
-        weights.layers,
-        weights.norm_weight,
-        weights.num_layers,
-        weights.num_attention_heads,
-        weights.num_key_value_heads,
-        weights.head_dim,
-        1e-6f
-    );
+    Tensor output;
+    if (use_avx) {
+        output = avx2::qwen3_forward_avx_with_cache(
+            initial_input,
+            &kv_cache,
+            weights.embed_tokens,
+            weights.layers,
+            weights.norm_weight,
+            weights.num_layers,
+            weights.num_attention_heads,
+            weights.num_key_value_heads,
+            weights.head_dim,
+            1e-6f
+        );
+    } else {
+        output = qwen3::qwen3_forward_with_cache(
+            initial_input,
+            &kv_cache,
+            weights.embed_tokens,
+            weights.layers,
+            weights.norm_weight,
+            weights.num_layers,
+            weights.num_attention_heads,
+            weights.num_key_value_heads,
+            weights.head_dim,
+            1e-6f
+        );
+    }
     double first_time = timer.elapsed_ms();
 
     std::cout << "    Initial " << initial_input.shape()[1] << " tokens: " << first_time << " ms\n";
@@ -180,18 +197,33 @@ double benchmark_with_cache(
         TensorL next_input(single_token, Shape({1, 1}));
 
         timer = Timer();
-        output = qwen3::qwen3_forward_with_cache(
-            next_input,
-            &kv_cache,
-            weights.embed_tokens,
-            weights.layers,
-            weights.norm_weight,
-            weights.num_layers,
-            weights.num_attention_heads,
-            weights.num_key_value_heads,
-            weights.head_dim,
-            1e-6f
-        );
+        if (use_avx) {
+            output = avx2::qwen3_forward_avx_with_cache(
+                next_input,
+                &kv_cache,
+                weights.embed_tokens,
+                weights.layers,
+                weights.norm_weight,
+                weights.num_layers,
+                weights.num_attention_heads,
+                weights.num_key_value_heads,
+                weights.head_dim,
+                1e-6f
+            );
+        } else {
+            output = qwen3::qwen3_forward_with_cache(
+                next_input,
+                &kv_cache,
+                weights.embed_tokens,
+                weights.layers,
+                weights.norm_weight,
+                weights.num_layers,
+                weights.num_attention_heads,
+                weights.num_key_value_heads,
+                weights.head_dim,
+                1e-6f
+            );
+        }
         double step_time = timer.elapsed_ms();
         generation_time += step_time;
 
@@ -246,12 +278,18 @@ int main() {
                 // Benchmark WITH cache (only compute new tokens)
                 double time_with = benchmark_with_cache(initial_input, weights, total_tokens);
 
+                // Benchmark WITH cache + AVX2
+                std::cout << "\n";
+                double time_with_avx = benchmark_with_cache(initial_input, weights, total_tokens, true);
+
                 // Calculate speedup
                 double speedup = time_without / time_with;
+                double speedup_avx = time_without / time_with_avx;
 
                 std::cout << "\n";
-                std::cout << "  >>> SPEEDUP: " << std::fixed << std::setprecision(2) << speedup << "x <<<\n";
-                std::cout << "  (Without cache: " << time_without << " ms, With cache: " << time_with << " ms)\n";
+                std::cout << "  >>> SPEEDUP (Baseline): " << std::fixed << std::setprecision(2) << speedup << "x <<<\n";
+                std::cout << "  >>> SPEEDUP (AVX2): " << speedup_avx << "x <<<\n";
+                std::cout << "  (Without cache: " << time_without << " ms, With cache: " << time_with << " ms, With cache+AVX2: " << time_with_avx << " ms)\n";
                 std::cout << "\n";
             }
         }

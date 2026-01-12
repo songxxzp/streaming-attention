@@ -489,9 +489,9 @@ Tensor qwen3_decoder_layer_avx_with_cache(
     Tensor v_proj_out = linear_avx2(normed_reshaped, v_proj, nullptr);
 
     // Reshape to [batch, num_heads, seq_len, head_dim]
-    Tensor q_reshaped = q_proj_out.view({batch, seq_len, num_attention_heads, head_dim});
-    Tensor k_reshaped = k_proj_out.view({batch, seq_len, num_key_value_heads, head_dim});
-    Tensor v_reshaped = v_proj_out.view({batch, seq_len, num_key_value_heads, head_dim});
+    Tensor q_reshaped = q_proj_out.view({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(num_attention_heads), static_cast<long>(head_dim)});
+    Tensor k_reshaped = k_proj_out.view({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(num_key_value_heads), static_cast<long>(head_dim)});
+    Tensor v_reshaped = v_proj_out.view({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(num_key_value_heads), static_cast<long>(head_dim)});
 
     // Transpose to [batch, num_heads, seq_len, head_dim]
     Tensor q = q_reshaped.transpose(1, 2);
@@ -503,6 +503,7 @@ Tensor qwen3_decoder_layer_avx_with_cache(
     size_t q_total_elements = batch * num_attention_heads * seq_len * head_dim;
     std::vector<float> q_normed_data(q_total_elements);
 
+    const float* q_data = q.data();
     #pragma omp parallel for if(batch * num_attention_heads * seq_len * head_dim > 1000)
     for (size_t b = 0; b < batch; ++b) {
         for (size_t h = 0; h < num_attention_heads; ++h) {
@@ -512,14 +513,14 @@ Tensor qwen3_decoder_layer_avx_with_cache(
                 // Compute RMS
                 float sum_sq = 0.0f;
                 for (size_t i = 0; i < head_dim; ++i) {
-                    float val = q[base_idx + i];
+                    float val = q_data[base_idx + i];
                     sum_sq += val * val;
                 }
                 float rms = std::sqrt(sum_sq / static_cast<float>(head_dim)) + 1e-6f;
 
                 // Normalize and scale
                 for (size_t i = 0; i < head_dim; ++i) {
-                    q_normed_data[base_idx + i] = (q[base_idx + i] / rms) * q_norm_data[i];
+                    q_normed_data[base_idx + i] = (q_data[base_idx + i] / rms) * q_norm_data[i];
                 }
             }
         }
@@ -531,6 +532,7 @@ Tensor qwen3_decoder_layer_avx_with_cache(
     size_t k_total_elements = batch * num_key_value_heads * seq_len * head_dim;
     std::vector<float> k_normed_data(k_total_elements);
 
+    const float* k_data = k.data();
     #pragma omp parallel for if(batch * num_key_value_heads * seq_len * head_dim > 1000)
     for (size_t b = 0; b < batch; ++b) {
         for (size_t h = 0; h < num_key_value_heads; ++h) {
@@ -540,14 +542,14 @@ Tensor qwen3_decoder_layer_avx_with_cache(
                 // Compute RMS
                 float sum_sq = 0.0f;
                 for (size_t i = 0; i < head_dim; ++i) {
-                    float val = k[base_idx + i];
+                    float val = k_data[base_idx + i];
                     sum_sq += val * val;
                 }
                 float rms = std::sqrt(sum_sq / static_cast<float>(head_dim)) + 1e-6f;
 
                 // Normalize and scale
                 for (size_t i = 0; i < head_dim; ++i) {
-                    k_normed_data[base_idx + i] = (k[base_idx + i] / rms) * k_norm_data[i];
+                    k_normed_data[base_idx + i] = (k_data[base_idx + i] / rms) * k_norm_data[i];
                 }
             }
         }
@@ -599,13 +601,18 @@ Tensor qwen3_decoder_layer_avx_with_cache(
         Tensor v_cached = kv_cache->get_cached_values(layer_idx, cached_seq_len);
 
         // Reshape to [batch, num_kv_heads, cached_seq_len, head_dim]
-        k_cached = k_cached.view({batch, num_key_value_heads, cached_seq_len, head_dim});
-        v_cached = v_cached.view({batch, num_key_value_heads, cached_seq_len, head_dim});
+        k_cached = k_cached.view({static_cast<long>(batch), static_cast<long>(num_key_value_heads), static_cast<long>(cached_seq_len), static_cast<long>(head_dim)});
+        v_cached = v_cached.view({static_cast<long>(batch), static_cast<long>(num_key_value_heads), static_cast<long>(cached_seq_len), static_cast<long>(head_dim)});
 
         // Concatenate cached and new along seq_len dimension
         size_t total_seq_len = cached_seq_len + seq_len;
         std::vector<float> k_final_data(batch * num_key_value_heads * total_seq_len * head_dim);
         std::vector<float> v_final_data(batch * num_key_value_heads * total_seq_len * head_dim);
+
+        const float* k_cached_data = k_cached.data();
+        const float* v_cached_data = v_cached.data();
+        const float* k_rope_data = k_rope.data();
+        const float* v_data = v.data();
 
         // Copy cached part
         for (size_t b = 0; b < batch; ++b) {
@@ -614,8 +621,8 @@ Tensor qwen3_decoder_layer_avx_with_cache(
                     for (size_t d = 0; d < head_dim; ++d) {
                         size_t cached_idx = ((b * num_key_value_heads + h) * cached_seq_len + s) * head_dim + d;
                         size_t final_idx = ((b * num_key_value_heads + h) * total_seq_len + s) * head_dim + d;
-                        k_final_data[final_idx] = k_cached[cached_idx];
-                        v_final_data[final_idx] = v_cached[cached_idx];
+                        k_final_data[final_idx] = k_cached_data[cached_idx];
+                        v_final_data[final_idx] = v_cached_data[cached_idx];
                     }
                 }
 
@@ -624,8 +631,8 @@ Tensor qwen3_decoder_layer_avx_with_cache(
                     for (size_t d = 0; d < head_dim; ++d) {
                         size_t new_idx = ((b * num_key_value_heads + h) * seq_len + s_new) * head_dim + d;
                         size_t final_idx = ((b * num_key_value_heads + h) * total_seq_len + cached_seq_len + s_new) * head_dim + d;
-                        k_final_data[final_idx] = k_rope[new_idx];
-                        v_final_data[final_idx] = v[new_idx];
+                        k_final_data[final_idx] = k_rope_data[new_idx];
+                        v_final_data[final_idx] = v_data[new_idx];
                     }
                 }
             }
@@ -691,12 +698,12 @@ Tensor qwen3_decoder_layer_avx_with_cache(
     Tensor attn_output_t = attn_output.transpose(1, 2);
 
     // Reshape to [batch, seq_len, hidden_size]
-    Tensor attn_output_reshaped = attn_output_t.contiguous().view({batch, seq_len, num_attention_heads * head_dim});
+    Tensor attn_output_reshaped = attn_output_t.contiguous().view({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(num_attention_heads * head_dim)});
 
     // Apply output projection with AVX2
     Tensor attn_output_2d = attn_output_reshaped.view({static_cast<long>(batch * seq_len), static_cast<long>(num_attention_heads * head_dim)});
     Tensor output = linear_avx2(attn_output_2d, o_proj, nullptr);
-    output = output.view({batch, seq_len, num_attention_heads * head_dim});
+    output = output.view({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(hidden_size)});
 
     // Residual 1
     Tensor hidden = residual + output;

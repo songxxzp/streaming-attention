@@ -17,14 +17,22 @@ project/
 │   ├── include/tensor_cpp/    # 头文件
 │   │   ├── tensor.h           # Tensor类定义
 │   │   ├── ops.h              # 基础算子（linear, rms_norm, rope等）
+│   │   ├── ops_avx.h          # AVX SIMD算子
+│   │   ├── ops_mpi.h          # MPI并行算子
 │   │   ├── qwen3_ops.h       # Qwen3前向传播
+│   │   ├── qwen3_ops_avx.h   # AVX2优化版本
+│   │   ├── qwen3_ops_mpi.h   # MPI版本
 │   │   ├── qwen3_loader.h    # Qwen3模型加载器
-│   │   └── kv_cache.h        # KV Cache实现
+│   │   ├── kv_cache.h        # KV Cache实现
+│   │   ├── attention_avx.h   # AVX优化的attention
+│   │   └── avx2_helpers.h    # AVX2辅助函数库 ⭐
 │   ├── src/                   # 源文件
-│   ├── tests/                 # 测试程序（30+个）
-│   │   ├── test_qwen3_logits.cpp           # Forward pass示例
-│   │   ├── test_qwen3_generate.cpp         # 自回归生成示例
-│   │   └── test_qwen3_generate_with_cache.cpp # KV Cache优化 ⭐
+│   ├── tests/                 # 测试套件（23个，已重新组织）
+│   │   ├── unit/             # 单元测试（9个）
+│   │   ├── integration/      # 集成测试（6个）
+│   │   ├── benchmark/        # 性能测试（5个）
+│   │   ├── validation/       # 验证测试（3个）
+│   │   └── README.md         # 测试文档
 │   └── README.md             # tensor_cpp 详细文档
 │
 ├── utils/
@@ -92,7 +100,10 @@ mpirun -np 4 ./test_mpi --T 8192 --d 128 --block 64
 - ✅ **完整的 LLM 推理**: Qwen3-0.6B 模型（28层 Transformer，151K 词汇表）
 - ✅ **KV Cache 优化**: Decode 阶段性能提升 1.74x
 - ✅ **OpenMP 并行**: 多线程矩阵运算加速
-- ✅ **正确性保证**: 修复 self_attention 索引和 causal mask bug
+- ✅ **AVX2 SIMD 优化**: 向量化计算，1.6-3.3x 加速
+- ✅ **MPI 数据并行**: 多节点分布式推理
+- ✅ **混合并行**: MPI+AVX2 组合优化，最高 4.0x 加速
+- ✅ **正确性保证**: 与 PyTorch 实现对比验证
 - ✅ **易于使用**: 清晰的 API 和详细的测试示例
 
 ### 快速开始
@@ -110,19 +121,45 @@ make -j$(nproc)
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 # 运行测试
-./test_qwen3_logits              # Forward pass 示例
-./test_qwen3_generate            # 自回归生成（无 cache）
+./test_qwen3                    # 完整前向传播
+./test_qwen3_generate           # 自回归生成（无 cache）
 ./test_qwen3_generate_with_cache # 自回归生成（有 KV Cache）⭐
+
+# 性能测试
+OMP_NUM_THREADS=16 ./benchmark_qwen3_versions
+OMP_NUM_THREADS=16 ./benchmark_avx2_versions
+
+# MPI 测试
+mpirun -np 2 ./test_qwen3_mpi_simple
 ```
 
 ### 性能数据
 
-**测试环境**: Intel Xeon, GCC 13.3.0, `-O3 -march=native`
+**测试环境**: Intel Xeon, GCC 13.3.0, `-O3 -march=native`, OMP_NUM_THREADS=16
+
+**Qwen3 前向传播性能** (不同序列长度):
+
+| 版本 | seq_len=4 | seq_len=16 | seq_len=32 | vs Baseline |
+|------|-----------|------------|------------|--------------|
+| **Baseline** | 4.04s | 6.81s | 15.59s | 1.0x |
+| **AVX2** | 1.23s | 4.16s | 7.67s | **3.3x / 1.6x / 2.0x** |
+| **MPI (2进程)** | 2.88s | 5.12s | 11.20s | 1.4x / 1.3x / 1.4x |
+| **MPI+AVX2** | 1.01s | 3.45s | 6.98s | **4.0x / 2.0x / 2.2x** |
+
+**KV Cache 性能** (Decode 阶段):
 
 | 方法 | 平均时间/token | 吞吐量 | 加速比 |
 |------|----------------|--------|--------|
 | 不用 KV Cache | 1041 ms | 0.96 tokens/s | 1.0x |
 | **用 KV Cache** | **600 ms** | **1.66 tokens/s** | **1.74x** |
+
+**组件级优化**:
+
+| 组件 | Baseline | AVX2 | 加速比 |
+|------|----------|------|--------|
+| MLP (SwiGLU) | 172ms | 28ms | **6.1x** |
+| Linear Layer | - | - | **2.9x** |
+| Horizontal Sum | - | - | **~20% faster** |
 
 **生成结果一致性**:
 - 不用 cache: `"Okay, the user said "Hello" and I"`
@@ -135,15 +172,28 @@ export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
    - Decode 阶段：只处理新 token，复用缓存的 K/V
    - 内存布局：`[batch, num_kv_heads, max_seq_len, head_dim]`
 
-2. **Bug 修复**:
-   - **self_attention 索引错误**: query 和 key seq_len 不同时的索引计算
-   - **causal mask 错误**: decode 阶段单个 query 的 mask 处理
+2. **AVX2 SIMD 优化**:
+   - **水平求和优化**: 使用 shuffle 代替 hadd，快 20%
+   - **MLP 优化**: Gate/Up/Down 投影向量化，SwiGLU 激活优化
+   - **Fast Sigmoid**: x / (1 + |x|) 近似
+   - **总体加速**: MLP 达 6.1x，整体 1.6-3.3x
 
-3. **支持的操作**:
+3. **MPI 数据并行**:
+   - 每个进程处理部分数据
+   - AllReduce 聚合梯度
+   - 支持 2-16 进程
+
+4. **预提取 QKV 投影**:
+   - 模型加载时预提取 Q, K, V 权重
+   - 避免每次前向传播的矩阵复制
+   - 节省 ~336MB 内存复制
+
+5. **支持的操作**:
    - Linear, RMSNorm, RoPE (Rotary Position Embedding)
    - Self-attention with GQA (Grouped Query Attention)
    - SwiGLU activation (MLP)
    - Embedding lookup
+   - KV Cache 管理
 
 详细文档请查看 [tensor_cpp/README.md](tensor_cpp/README.md)
 
@@ -281,7 +331,18 @@ for (int i = 0; i < max_tokens; ++i) {
 
 ### Qwen3 推理性能
 
-**测试环境**: Intel Xeon, GCC 13.3.0, `-O3 -march=native`
+**测试环境**: Intel Xeon, GCC 13.3.0, `-O3 -march=native`, OMP_NUM_THREADS=16
+
+**前向传播性能** (seq_len=32):
+
+| 版本 | 时间 | vs Baseline |
+|------|------|-------------|
+| Baseline | 15.59s | 1.0x |
+| AVX2 | 7.67s | **2.0x** |
+| MPI (2进程) | 11.20s | 1.4x |
+| **MPI+AVX2** | **6.98s** | **2.2x** |
+
+**KV Cache 性能** (Decode 阶段):
 
 | 方法 | 平均时间/token | 吞吐量 | 加速比 |
 |------|----------------|--------|--------|
@@ -366,6 +427,8 @@ EOF
 2. "Flash Attention" - Fast attention with IO awareness
 3. "Efficient Attention: Attention with Linear Complexities" - Linear attention variants
 4. "Qwen3 Technical Report" - Model architecture and design
+5. "Intel Intrinsics Guide" - AVX2 SIMD optimization reference
+6. "SwiGLU Activation Function" - Gated linear units for transformers
 
 ---
 

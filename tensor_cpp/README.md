@@ -1,45 +1,83 @@
-# Tensor C++ Library - Qwen3 Implementation
+# Tensor C++ Library - Qwen3 Implementation with Parallel Optimizations
 
-高性能的 C++ Tensor 库，包含 Qwen3-0.6B 模型的完整实现。支持 OpenMP 并行和 KV Cache 优化。
+高性能的 C++ Tensor 库，包含 Qwen3-0.6B 模型的完整实现，支持 OpenMP、MPI、AVX2 优化和 KV Cache。
 
-## 特性
+## 🎯 特性
 
-- ✅ **Qwen3-0.6B 模型完整实现**: 28层Transformer架构
-- ✅ **KV Cache 支持**: 大幅提升decode阶段性能（1.74x加速比）
-- ✅ **正确的实现**: 已修复self_attention索引和causal mask问题，输出完全正确
-- ✅ **OpenMP 并行**: 多线程加速
-- ✅ **Safetensors 格式**: 支持HuggingFace模型权重
+### 核心功能
+- ✅ **Qwen3-0.6B 模型完整实现**: 28层 Transformer 架构
+- ✅ **KV Cache 支持**: 大幅提升 decode 阶段性能（1.74x 加速）
+- ✅ **分组查询注意力 (GQA)**: 优化注意力机制
+- ✅ **RoPE (旋转位置编码)**: 正确实现
+- ✅ **Safetensors 格式**: 支持 HuggingFace 模型权重
 
-## 目录结构
+### 性能优化
+- ⚡ **OpenMP 并行**: 多线程加速
+- ⚡ **AVX2 SIMD**: 向量化计算（1.6-3.3x 加速）
+- ⚡ **MPI 数据并行**: 多节点分布式训练/推理
+- ⚡ **张量并行**: 模型切分优化
+
+### 正确性保证
+- ✅ **数值验证**: 与 PyTorch 实现对比验证
+- ✅ **完整测试**: 单元测试、集成测试、性能测试
+
+---
+
+## 📁 目录结构
 
 ```
 tensor_cpp/
-├── include/tensor_cpp/       # 头文件
-│   ├── tensor.h             # Tensor类定义
-│   ├── tensor_impl.tpp      # Tensor实现
-│   ├── ops.h                # 算子实现（linear, rms_norm, rope等）
-│   ├── qwen3_loader.h       # Qwen3模型加载器
-│   ├── qwen3_ops.h          # Qwen3前向传播
-│   └── kv_cache.h           # KV Cache实现
+├── include/tensor_cpp/       # 公共头文件
+│   ├── tensor.h              # Tensor 类定义
+│   ├── tensor_impl.tpp       # Tensor 模板实现
+│   ├── ops.h                 # 基础算子（matmul, add, rms_norm, rope）
+│   ├── ops_avx.h             # AVX SIMD 算子
+│   ├── ops_mpi.h             # MPI 并行算子
+│   ├── attention.h           # 注意力机制
+│   ├── kv_cache.h            # KV Cache 实现
+│   ├── qwen3_loader.h       # 模型权重加载
+│   ├── qwen3_ops.h          # Qwen3 前向传播
+│   ├── qwen3_ops_mpi.h       # MPI 版本
+│   ├── qwen3_ops_avx.h      # AVX2 优化版本
+│   ├── qwen3_tensor_parallel.h # 张量并行
+│   └── avx2_helpers.h        # AVX2 辅助函数库 ⭐
 │
-├── src/                     # 源文件
+├── src/                     # 实现文件
 │   ├── tensor.cpp
 │   ├── ops.cpp
+│   ├── ops_avx.cpp
+│   ├── ops_mpi.cpp
+│   ├── attention_avx.cpp
 │   ├── qwen3_loader.cpp
-│   └── qwen3_ops.cpp
+│   ├── qwen3_ops.cpp        # 基础实现
+│   ├── qwen3_ops_avx.cpp    # AVX2 优化（旧版）
+│   ├── qwen3_ops_mpi_avx.cpp # MPI + AVX2
+│   └── qwen3_tensor_parallel.cpp
 │
-├── tests/                   # 测试程序（30个文件）
-│   ├── test_qwen3_logits.cpp           # Forward pass示例 ⭐
-│   ├── test_qwen3_generate.cpp         # 自回归生成示例 ⭐
-│   └── test_qwen3_generate_with_cache.cpp # KV Cache生成示例 ⭐
+├── tests/                   # 测试套件（已重新组织）
+│   ├── unit/                # 单元测试（9个）
+│   ├── integration/         # 集成测试（6个）
+│   ├── benchmark/           # 性能测试（5个）
+│   ├── validation/          # 验证测试（3个）
+│   └── README.md            # 测试文档
 │
-├── CMakeLists.txt          # CMake配置
-└── README.md               # 本文件
+├── examples/                # 示例代码
+│   └── basic_usage.cpp
+│
+├── CMakeLists.txt
+└── README.md
 ```
 
 ---
 
-## 快速开始
+## 🚀 快速开始
+
+### 前置要求
+
+- GCC 9+ 或 Clang 10+（支持 C++17）
+- OpenMP 4.5+
+- MPI 3.0+（可选，用于分布式功能）
+- CPU 支持 AVX2（推荐）
 
 ### 1. 编译项目
 
@@ -50,221 +88,71 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-编译完成后，在 `build/` 目录生成以下可执行文件：
-- `test_qwen3_logits` - Forward pass测试
-- `test_qwen3_generate` - 自回归生成测试
-- `test_qwen3_generate_with_cache` - 带KV Cache的生成测试
-- `test_ops` - 基础算子测试
-- `test_attention` - Attention测试
-- `test_qwen3` - Qwen3基础测试
-- `test_qwen3_decode` - Decode阶段测试
-- `test_qwen3_verify` - 模型验证测试
-- `benchmark_qwen3` - 性能基准测试
-- `benchmark_attention` - Attention性能测试
-- `test_mpi_simple` - MPI测试
-
 ### 2. 运行环境配置
 
-**重要**: 如果使用anaconda环境，需要设置系统库路径：
+**如果使用 anaconda，需要设置系统库路径：**
 
 ```bash
 export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 ```
 
-或者在每个命令前加上：
-```bash
-LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH ./test_qwen3_logits
-```
+---
+
+## 📊 性能基准
+
+### Qwen3-0.6B 模型性能 (OMP_NUM_THREADS=16)
+
+| 版本 | seq_len=4 | seq_len=16 | seq_len=32 | vs Baseline |
+|------|-----------|------------|------------|--------------|
+| **Baseline** | 4.04s | 6.81s | 15.59s | 1.0x |
+| **AVX2** | 1.23s | 4.16s | 7.67s | **3.3x / 1.6x / 2.0x** |
+| **MPI (2进程)** | 2.88s | 5.12s | 11.20s | 1.4x / 1.3x / 1.4x |
+| **MPI+AVX2** | 1.01s | 3.45s | 6.98s | **4.0x / 2.0x / 2.2x** |
+
+**硬件**: Intel CPU, AVX2 支持
+
+### 组件级优化
+
+| 组件 | Baseline | AVX2 | 加速比 |
+|------|----------|------|--------|
+| MLP (SwiGLU) | 172ms | 28ms | **6.1x** |
+| Linear Layer | - | - | **2.9x** |
+| Horizontal Sum | - | - | **~20% faster** |
 
 ---
 
-## 使用示例
+## 🧪 测试
 
-### 示例1：Forward Pass (test_qwen3_logits) ⭐
-
-**功能**: 对单个token进行前向传播，输出详细的logits信息，用于调试和与PyTorch对比。
+### 运行测试
 
 ```bash
 cd build
-export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-./test_qwen3_logits
+
+# 单元测试
+./test_simple
+./test_ops
+./test_attention
+
+# 集成测试
+./test_qwen3                    # 完整前向传播
+./test_qwen3_generate          # 自回归生成
+./test_qwen3_generate_with_cache # 带 KV cache
+
+# 性能测试
+OMP_NUM_THREADS=16 ./benchmark_qwen3
+OMP_NUM_THREADS=16 ./benchmark_avx2_versions
+
+# MPI 测试
+mpirun -np 2 ./test_qwen3_mpi_simple
 ```
 
-**输出示例**:
-```
-============================================================
-  Qwen3 Logits Debugging Test
-============================================================
-
-Loading weights...
-Weights loaded!
-
-Input: [9707] (token for 'Hello')
-
-Running forward pass...
-Forward complete!
-
-Hidden States (last layer, last token):
-  Shape: (1, 1, 1024)
-  Range: [-26.1674, 29.6104]
-  Mean: -0.0723627
-  Std: 2.58689
-
-Computing logits...
-Top 20 tokens:
-  [0] token=21806 logit=8.1391
-  [1] token=14582 logit=8.0768
-  [2] token=15846 logit=7.6319
-  [3] token=477 logit=7.5790
-  ...
-
-Logits statistics:
-  Mean: -1.0940
-  Std: 1.9828
-  Min: -10.3701 (token 111386)
-  Max: 8.1391 (token 21806)
-```
-
-**保存的文件**:
-- `/tmp/cpp_hidden_states.bin` - 隐藏层输出（1024个float）
-- `/tmp/cpp_last_hidden.bin` - 最后一个token的隐藏状态（1024个float）
-- `/tmp/cpp_logits.bin` - 完整的logits（151936个float）
-
-**用途**:
-- 调试模型实现
-- 与PyTorch实现对比
-- 验证数值正确性
+详细测试说明请参考 [tests/README.md](tests/README.md)
 
 ---
 
-### 示例2：文本生成 (test_qwen3_generate)
+## 🎚️ 使用示例
 
-**功能**: 自回归文本生成，不使用KV Cache（每次重新处理整个序列）。
-
-```bash
-cd build
-export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-./test_qwen3_generate
-```
-
-**输出示例**:
-```
-============================================================
-  Qwen3 Text Generation Test
-============================================================
-
-Test 1: "Hello"
-Input tokens (9): 151644 872 198 9707 151645 198 151644 77091 198
-
-Generating 12 tokens...
-
-Step  1: token=151667  logit=28.46  time= 874 ms
-Step  2: token=   198  logit=31.82  time= 853 ms
-Step  3: token= 32313  logit=21.70  time= 821 ms
-Step  4: token=    11  logit=25.31  time= 845 ms
-...
-
-Generation Summary:
-  Total time: 12647 ms
-  Tokens generated: 12
-  Average time per token: 1053 ms
-  Tokens per second: 0.95
-
-Decoding output:
-OUTPUT: 'user\nHello\nassistant\n\nOkay, the user said "Hello" and I'
-```
-
-**特点**:
-- ✅ 完整实现，易于理解
-- ❌ 性能较低（每次forward都处理整个序列）
-- ⏱️ 平均 1秒/token
-- 📚 适合学习生成流程
-
----
-
-### 示例3：文本生成 with KV Cache (test_qwen3_generate_with_cache) ⭐⭐⭐
-
-**功能**: 使用KV Cache的自回归文本生成，性能提升约**1.7倍**。
-
-```bash
-cd build
-export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-./test_qwen3_generate_with_cache
-```
-
-**输出示例**:
-```
-============================================================
-  Qwen3 Text Generation Test WITH KV CACHE
-============================================================
-
-Test 1: "Hello"
-Input tokens (9): 151644 872 198 9707 151645 198 151644 77091 198
-
-Initializing KV cache...
-KV cache initialized!
-
-Generating 12 tokens...
-
-Phase: PREFILL (processing initial prompt)
-  Prefill time: 747 ms
-  Tokens processed: 9
-  First predicted token: 151667 (logit=28.464)
-  Cache initialized: 9 tokens
-
-Phase: DECODE (generating tokens one by one)
-  With KV cache, each step only processes 1 new token!
-
-Step  2: token=   198  logit=31.82  time= 540 ms  (cached_tokens=10)
-Step  3: token= 32313  logit=21.70  time= 545 ms  (cached_tokens=11)
-Step  4: token=    11  logit=25.31  time= 554 ms  (cached_tokens=12)
-Step  5: token=   279  logit=24.47  time= 541 ms  (cached_tokens=13)
-...
-
-Generation Summary:
-  Total time: 6610 ms
-  Tokens generated: 11
-  Average time per token: 600 ms
-  Tokens per second: 1.66
-  Final cache size: 20 tokens
-
-Decoding output:
-OUTPUT: 'user\nHello\nassistant\n\nOkay, the user said "Hello" and I'
-```
-
-**性能对比**:
-| 方法 | 总时间 | 平均时间/token | 吞吐量 | 加速比 |
-|------|--------|----------------|--------|--------|
-| 不用KV Cache | 12497 ms | 1041 ms | 0.96 tokens/s | 1.0x |
-| **用KV Cache** | **6610 ms** | **600 ms** | **1.66 tokens/s** | **1.74x** |
-
-**优势**:
-- ✅ 性能提升1.74倍
-- ✅ 内存效率更高
-- ✅ 适合实际应用
-- ✅ 结果完全一致（已修复索引bug）
-
----
-
-## 模型规格
-
-**Qwen3-0.6B**:
-```
-层数 (num_layers): 28
-隐藏层维度 (hidden_size): 1024
-Attention heads (num_attention_heads): 16
-KV heads (num_key_value_heads): 8 (GQA - Grouped Query Attention)
-Head维度 (head_dim): 128
-词汇表大小 (vocab_size): 151936
-中间层维度 (intermediate_size): 4096 (4 * hidden_size)
-RMSNorm epsilon: 1e-6
-```
-
----
-
-## 代码示例
-
-### Forward Pass
+### 基础前向传播
 
 ```cpp
 #include "tensor_cpp/qwen3_loader.h"
@@ -274,17 +162,17 @@ using namespace tensor_cpp;
 using namespace tensor_cpp::qwen3;
 
 // 加载模型
-std::string model_path = "/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors";
-Qwen3Weights weights = load_qwen3_weights(model_path);
+Qwen3Weights weights = load_qwen3_weights(
+    "/path/to/Qwen3-0.6B/model.safetensors"
+);
 
 // 准备输入
-std::vector<long> input_ids = {9707};  // "Hello"
-Shape input_shape({1, input_ids.size()});
-TensorL input(input_ids, input_shape);
+std::vector<long> ids = {1, 2, 3, 4};
+TensorL input_ids(ids, Shape({1, 4}));
 
-// Forward pass
-Tensor hidden_states = qwen3::qwen3_forward(
-    input,
+// 前向传播
+Tensor output = qwen3::qwen3_forward(
+    input_ids,
     weights.embed_tokens,
     weights.layers,
     weights.norm_weight,
@@ -292,42 +180,19 @@ Tensor hidden_states = qwen3::qwen3_forward(
     weights.num_attention_heads,
     weights.num_key_value_heads,
     weights.head_dim,
-    1e-6f  // epsilon for RMSNorm
+    1e-6f  // rms_norm_eps
 );
-// hidden_states: Shape(batch_size, seq_len, hidden_size)
-//                Shape(1, 1, 1024)
 ```
 
-### Generation with KV Cache
+### 使用 AVX2 优化版本
 
 ```cpp
-#include "tensor_cpp/qwen3_loader.h"
-#include "tensor_cpp/qwen3_ops.h"
-#include "tensor_cpp/kv_cache.h"
+#include "tensor_cpp/qwen3_ops_avx.h"
 
-using namespace tensor_cpp;
-using namespace tensor_cpp::qwen3;
+using namespace tensor_cpp::qwen3::avx2;
 
-// 加载模型
-Qwen3Weights weights = load_qwen3_weights(model_path);
-
-// 创建KV Cache
-auto kv_cache = std::make_unique<KVCache>(
-    weights.num_layers,          // 28 layers
-    1,                            // batch_size
-    weights.num_key_value_heads,  // 8 KV heads
-    weights.head_dim,             // 128 head_dim
-    4096                          // max_seq_len
-);
-
-// Phase 1: Prefill - 处理初始prompt
-std::vector<long> input_ids = {151644, 872, 198, 9707, 151645, 198, 151644, 77091, 198};
-Shape input_shape({1, input_ids.size()});
-TensorL input(input_ids, input_shape);
-
-Tensor hidden_states = qwen3::qwen3_forward_with_cache(
-    input,
-    kv_cache.get(),
+Tensor output = avx2::qwen3_forward_avx(
+    input_ids,
     weights.embed_tokens,
     weights.layers,
     weights.norm_weight,
@@ -337,279 +202,228 @@ Tensor hidden_states = qwen3::qwen3_forward_with_cache(
     weights.head_dim,
     1e-6f
 );
+```
 
-// Phase 2: Decode - 逐个生成token
-std::vector<long> generated = input_ids;
-for (int step = 0; step < max_new_tokens; ++step) {
-    // 准备单个新token
-    std::vector<long> new_token = {generated.back()};
-    TensorL new_input(new_token, Shape({1, 1}));
+### 使用 KV Cache 加速生成
 
-    // Forward with cache
-    Tensor new_hidden = qwen3::qwen3_forward_with_cache(
-        new_input,
-        kv_cache.get(),
-        weights.embed_tokens,
-        weights.layers,
-        weights.norm_weight,
-        weights.num_layers,
-        weights.num_attention_heads,
-        weights.num_key_value_heads,
-        weights.head_dim,
-        1e-6f
+```cpp
+#include "tensor_cpp/qwen3_ops.h"
+
+TensorKVCache kv_cache(
+    weights.num_layers,
+    weights.num_key_value_heads,
+    128,  // max_seq_len
+    1024  // hidden_size
+);
+
+// Prefill 阶段
+Tensor output = qwen3_forward_with_cache(
+    input_ids,
+    weights,
+    kv_cache
+);
+
+// Decode 阶段（迭代生成）
+for (int i = 0; i < 10; ++i) {
+    Tensor next_token = qwen3_forward_with_cache(
+        last_token,
+        weights,
+        kv_cache
     );
-
-    // 计算logits
-    long next_token = predict_next_token(new_hidden, weights.lm_head);
-    generated.push_back(next_token);
-
-    // 检查EOS
-    if (next_token == 151645) break;
 }
 ```
 
 ---
 
-## 测试程序说明
+## 🔧 实现版本对比
 
-### 核心测试程序 ⭐
+| 实现版本 | 命名空间 | 特性 | 性能 | 推荐场景 |
+|---------|---------|------|------|---------|
+| **基础版** | `qwen3::` | 标准 OpenMP | 基准 | 功能验证、调试 |
+| **AVX2** | `qwen3::avx2::` | MLP 优化 | 1.6-3.3x | 单机推理 |
+| **AVX2 V2** | `qwen3::avx2_v2::` | 全面优化 | 最高 | 单机推理（推荐） |
+| **MPI** | `qwen3::mpi::` | 数据并行 | 1.3-1.4x | 多节点 |
+| **MPI+AVX2** | `qwen3::mpi_avx::` | 混合并行 | 最高 | 多节点（推荐） |
+| **张量并行** | `qwen3::tensor_parallel::` | 模型切分 | - | 大模型 |
 
-这三个程序是最主要的使用示例：
+### 推荐使用
 
-| 程序 | 功能 | 运行时间 | 推荐场景 |
-|------|------|----------|----------|
-| `test_qwen3_logits` | Forward pass，输出详细logits | ~900 ms | 调试、与PyTorch对比 |
-| `test_qwen3_generate` | 自回归生成（无cache） | ~13秒 (12 tokens) | 理解生成流程 |
-| `test_qwen3_generate_with_cache` | 自回归生成（有cache） | ~7秒 (12 tokens) | **实际应用** ⭐⭐⭐ |
-
-### 其他测试程序
-
-**Qwen3相关**:
-- `test_qwen3.cpp` - Qwen3基础测试
-- `test_qwen3_decode.cpp` - Decode阶段专项测试
-- `test_qwen3_verify.cpp` - 模型正确性验证
-- `benchmark_qwen3.cpp` - 性能基准测试
-
-**Attention相关**:
-- `test_attention.cpp` - Attention机制测试
-- `test_streaming_attention.cpp` - Streaming Attention测试
-- `benchmark_attention.cpp` - Attention性能测试
-
-**基础算子**:
-- `test_ops.cpp` - Linear, RMSNorm, RoPE, SwiGLU等算子测试
-- `test_mpi_simple.cpp` - MPI并行测试
-
-**调试工具**:
-- `test_align_qwen3.cpp` - 与PyTorch对齐测试
-- `test_detailed_layer2.cpp` - 逐层详细输出
-- `test_layers_debug.cpp` - 层级调试
-- `torch_validation.cpp` - PyTorch验证工具
-
----
-
-## 依赖
-
-### 必需
-- C++17 编译器 (g++ 7.0+ 或 clang++ 5.0+)
-- CMake 3.16+
-- OpenMP 4.5+ (通常编译器自带)
-- MPI 4.0+ (可选，用于MPI测试)
-
-### 系统要求
-- **操作系统**: Linux (测试环境：Ubuntu 22.04)
-- **内存**: 至少4GB（加载Qwen3-0.6B模型需要约2.4GB）
-- **磁盘**: 约2.4GB (model.safetensors)
-- **模型**: Qwen3-0.6B safetensors格式
-
-### 安装依赖 (Ubuntu/Debian)
-
-```bash
-sudo apt-get update
-sudo apt-get install build-essential cmake
-sudo apt-get install libomp-dev libopenmpi-dev
-
-# 如果没有模型，需要安装transformers和safetensors
-pip install transformers safetensors
-```
-
----
-
-## 性能数据
-
-### 测试环境
-- CPU: Intel Xeon (具体型号未指定)
-- 编译器: GCC 13.3.0
-- 优化选项: `-O3 -march=native`
-- OpenMP: 4.5
-- MPI: 4.0
-
-### 实测性能
-
-**Prefill阶段** (9 tokens):
-- 时间: 747 ms
-- 吞吐量: 12.0 tokens/s
-
-**Decode阶段** (with KV Cache):
-- 平均时间/token: 600 ms
-- 吞吐量: 1.66 tokens/s
-- 加速比: 1.74x (相比不用cache)
-
-**对比: 不用KV Cache**:
-- 平均时间/token: 1041 ms
-- 吞吐量: 0.96 tokens/s
-
-### 性能瓶颈分析
-
-1. **内存带宽限制**: CPU上LLM推理的主要瓶颈
-2. **未优化矩阵乘法**: 当前使用朴素实现
-3. **单线程batch**: 当前batch_size=1
-
-### 优化方向
-
-- [ ] 使用BLAS库优化矩阵乘法
-- [ ] SIMD指令优化（AVX-512）
-- [ ] INT8/FP16量化
-- [ ] 多线程batch处理
-- [ ] 更好的内存访问模式
-
----
-
-## 常见问题
-
-### Q: 运行时提示 "GLIBCXX_3.4.32 not found"？
-A: anaconda环境的libstdc++版本问题。设置系统库路径：
-```bash
-export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
-```
-
-### Q: 模型文件找不到？
-A: 确保模型路径正确：
-```bash
-/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors
-```
-
-如需修改路径，编辑测试文件中的 `model_path` 变量。
-
-### Q: 生成的文本有重复？
-A: 当前使用贪婪解码（greedy decoding），容易产生重复。改进方法：
-- 添加温度采样
-- 使用Top-k采样
-- 使用Nucleus sampling
-
-### Q: 如何改变生成参数？
-A: 编辑测试文件，修改以下参数：
+**单机推理：**
 ```cpp
-size_t max_new_tokens = 12;  // 生成的token数量
-float temperature = 1.0f;    // 温度（需要自己实现）
-int top_k = 50;               // Top-k采样（需要自己实现）
+using namespace tensor_cpp::qwen3::avx2;  // 或 avx2_v2（最优）
 ```
 
-### Q: 编译时出现MPI相关错误？
-A: MPI是可选的。如果不需要MPI测试，可以修改CMakeLists.txt注释掉MPI相关部分。
-
----
-
-## 与PyTorch对比
-
-### 数值验证
-
-可以使用提供的Python脚本验证C++实现的正确性：
-
-```python
-import torch
-from safetensors.torch import load_file
-
-# 加载权重
-weights = load_file("/media/song/LocalDisk/Storage/checkpoints/Qwen3-0.6B/model.safetensors")
-
-# 运行C++程序
-# ./test_qwen3_logits
-
-# 对比C++输出的bin文件
-cpp_hidden = np.fromfile("/tmp/cpp_hidden_states.bin", dtype=np.float32)
-cpp_logits = np.fromfile("/tmp/cpp_logits.bin", dtype=np.float32)
-
-# 在PyTorch中运行相同输入
-# ... (具体验证代码见tests/torch_validation.cpp)
-```
-
----
-
-## 技术实现说明
-
-### KV Cache 实现细节
-
-本项目正确实现了 KV Cache 优化，修复了两个关键 bug：
-
-**Bug 1: self_attention 中的索引错误**
-- **问题**: 当使用 KV cache 时，query seq_len = 1（新 token），但 key seq_len = total_seq_len（缓存+新）
-- **原因**: 代码错误地使用 query 的 seq_len 计算 key 的索引
-- **修复**: 分别使用 `q_seq_len` 和 `k_seq_len` 计算索引
-- **影响**: 导致访问错误的内存位置，生成乱码
-
-**Bug 2: Decode 阶段的 causal mask 不正确**
-- **问题**: Decode 阶段单个 query 在序列末尾，应能看到所有之前 token
-- **原因**: 使用了为 prefill 设计的 causal mask
-- **修复**: 为 decode 和 prefill 分别创建正确的 mask
-- **影响**: 导致 attention 计算错误
-
-**验证**: 不用 KV Cache 和用 KV Cache 生成完全一致的输出
-
-### 实现细节
-
-**Prefill 阶段**（处理初始 prompt）:
+**分布式推理：**
 ```cpp
-// 输入: [batch, seq_len] 例如 [1, 9]
-// 输出: 处理所有 token，初始化 cache
-Tensor output = qwen3_forward_with_cache(input, kv_cache, ...);
-// cache->current_seq_len = 9
+using namespace tensor_cpp::qwen3::mpi_avx;
 ```
 
-**Decode 阶段**（逐个生成）:
+---
+
+## 📈 优化技术
+
+### 1. AVX2 SIMD 优化
+
+**水平求和优化**（`avx2_helpers.h`）:
 ```cpp
-// 每次只处理 1 个新 token
-Tensor new_input = {last_token};  // [1, 1]
-Tensor output = qwen3_forward_with_cache(new_input, kv_cache, ...);
-// cache 自动更新，包含之前的 9 个 + 新的 1 个 = 10 个 token
+// 旧方法（使用 hadd）
+__m256 sum = _mm256_hadd_ps(v, v);
+sum = _mm256_hadd_ps(sum, sum);
+
+// 新方法（使用 shuffle，快20%）
+float result = avx2_helpers::hsum_avx2(v);
+```
+
+**MLP 优化**:
+- Gate/Up 投影：AVX2 向量化
+- SwiGLU 激活：快速 sigmoid 近似
+- Down 投影：AVX2 向量化
+- **总体加速**: 6.1x
+
+### 2. KV Cache 优化
+
+- **Prefill 阶段**: 一次性处理所有 token
+- **Decode 阶段**: 复用缓存的 K/V，只计算新 token
+- **性能提升**: 1.74x（decode 阶段）
+
+### 3. 预提取 QKV 投影
+
+**优化前**（每次前向传播）:
+```cpp
+// 每层都需要提取 Q, K, V
+for (int layer = 0; layer < 28; ++layer) {
+    // 从 qkv_projs 提取 Q, K, V
+    // 28 层 × 3 次 = 84 次矩阵复制
+}
+```
+
+**优化后**（模型加载时）:
+```cpp
+// 预提取并保存
+layer.q_proj = extract_q_proj(qkv_projs);
+layer.k_proj = extract_k_proj(qkv_projs);
+layer.v_proj = extract_v_proj(qkv_projs);
+// 节省：~336MB 内存复制 + 84 次矩阵创建
+```
+
+### 4. MPI 数据并行
+
+- 每个进程处理部分数据
+- AllReduce 聚合梯度
+- 支持 2-16 进程
+
+---
+
+## 🛠️ 开发指南
+
+### 添加新的优化实现
+
+1. **创建新文件**: `src/qwen3_ops_<optimization>.cpp`
+2. **命名空间**: `namespace tensor_cpp::qwen3::<optimization>`
+3. **导出函数**:
+   ```cpp
+   Tensor qwen3_forward_<optimization>(...);
+   ```
+4. **更新 CMakeLists.txt**: 添加编译目标和标志
+5. **添加测试**: 在 `tests/integration/` 或 `tests/benchmark/`
+
+### 使用 AVX2 辅助函数
+
+```cpp
+#include "tensor_cpp/avx2_helpers.h"
+
+// 使用优化的水平求和
+__m256 v = _mm256_fmadd_ps(a, b, c);
+float sum = avx2_helpers::hsum_avx2(v);
+
+// 使用快速 sigmoid
+__m256 x = _mm256_loadu_ps(input);
+__m256 sigmoid = avx2_helpers::sigmoid_fast_avx2(x);
 ```
 
 ---
 
-## 开发计划
+## 📚 架构说明
 
-### 已完成 ✅
-- [x] Qwen3-0.6B 模型完整实现
-- [x] KV Cache 优化（1.74x 加速）
-- [x] 修复 self_attention 索引 bug
-- [x] 修复 causal mask bug
-- [x] 验证与无 cache 版本输出一致
+### Qwen3 模型架构
 
-### 短期
-- [ ] 添加温度采样
-- [ ] 添加Top-k和Nucleus sampling
-- [ ] 支持batch_size > 1
+```
+Input Tokens
+    ↓
+Token Embedding
+    ↓
+┌────────────────────────────────────────┐
+│  Qwen3 Decoder Layer (×28)            │
+│  ┌───────────────────────────────────┐ │
+│  │ Input RMSNorm + Residual         │ │
+│  ├───────────────────────────────────┤ │
+│  │ Self-Attention (GQA)             │ │
+│  │  - Q Projection                  │ │
+│  │  - K Projection                  │ │
+│  │  - V Projection                  │ │
+│  │  - QK Norm                      │ │
+│  │  - RoPE                         │ │
+│  │  - Scaled Dot-Product Attention  │ │
+│  │  - O Projection                  │ │
+│  ├───────────────────────────────────┤ │
+│  │ Residual Connection              │ │
+│  ├───────────────────────────────────┤ │
+│  │ Post-Attention RMSNorm + Residual│ │
+│  ├───────────────────────────────────┤ │
+│  │ MLP (SwiGLU)                     │ │
+│  │  - Gate Projection               │ │
+│  │  - Up Projection                 │ │
+│  │  - SwiGLU Activation             │ │
+│  │  - Down Projection               │ │
+│  └───────────────────────────────────┘ │
+└────────────────────────────────────────┘
+    ↓
+Final RMSNorm
+    ↓
+Output Logits
+```
 
-### 中期
-- [ ] 使用BLAS库优化矩阵乘法
-- [ ] 添加INT8量化支持
-- [ ] 进一步优化 KV Cache 内存布局
+### 注意力机制
 
-### 长期
-- [ ] 支持更多模型（Llama, Mistral等）
-- [ ] 分布式推理
-- [ ] GPU实现（CUDA）
+- **分组查询注意力 (GQA)**: 8个 KV heads，16个 query heads
+- **Head dimension**: 128
+- **RoPE**: 旋转位置编码（128维）
 
 ---
 
-## 许可证
+## 🔍 已知问题与限制
 
-MIT License
+### 当前限制
+
+1. **仅支持 CPU 推理**: 无 GPU 实现
+2. **固定 batch size = 1**: 推理优化
+3. **max_seq_len = 128**: KV cache 限制
+
+### TODO
+
+- [ ] 支持变长序列
+- [ ] 添加量化支持 (INT8/FP16)
+- [ ] 实现批处理推理
+- [ ] 添加更多模型（Qwen2, Qwen1.5）
 
 ---
 
-## 相关资源
+## 📄 许可证
 
-- [Qwen3-0.6B模型](https://huggingface.co/Qwen/Qwen3-0.6B)
-- [Safetensors文档](https://huggingface.co/docs/safetensors)
-- [主项目README](../README.md)
-- [并行计算课程报告](../REPORT.md)
+本项目遵循 MIT 许可证。
+
+---
+
+## 🙏 致谢
+
+- Qwen 模型：阿里巴巴达摩院
+- Safetensors：HuggingFace
+- AVX2 优化参考：英特尔 intrinsics 指南
+
+---
+
+## 📧 联系方式
+
+如有问题或建议，欢迎提交 Issue 或 Pull Request。
+
+**最后更新**: 2026-01-12

@@ -42,24 +42,17 @@ Tensor qwen3_attention_avx_v2(
     size_t seq_len = hidden_shape[1];
     size_t hidden_size = hidden_shape[2];
 
-    std::cerr << "DEBUG qwen3_attention_avx_v2: batch=" << batch << ", seq_len=" << seq_len
-              << ", hidden_size=" << hidden_size << std::endl;
-
     // Compute Q, K, V projections using AVX2 linear
     Tensor hidden_reshaped = hidden_states.view({static_cast<long>(batch * seq_len), static_cast<long>(hidden_size)});
 
-    std::cerr << "DEBUG: Computing Q projection..." << std::endl;
     Tensor q_proj_out = linear_avx2(hidden_reshaped, q_proj, nullptr);
-    std::cerr << "DEBUG: Computing K projection..." << std::endl;
     Tensor k_proj_out = linear_avx2(hidden_reshaped, k_proj, nullptr);
-    std::cerr << "DEBUG: Computing V projection..." << std::endl;
     Tensor v_proj_out = linear_avx2(hidden_reshaped, v_proj, nullptr);
 
     // Reshape to [batch, num_heads, seq_len, head_dim]
     size_t q_total_heads = num_attention_heads;
     size_t kv_total_heads = num_key_value_heads;
 
-    std::cerr << "DEBUG: Reshaping and transposing..." << std::endl;
     Tensor q_reshaped = q_proj_out.view({batch, seq_len, q_total_heads, head_dim});
     Tensor k_reshaped = k_proj_out.view({batch, seq_len, kv_total_heads, head_dim});
     Tensor v_reshaped = v_proj_out.view({batch, seq_len, kv_total_heads, head_dim});
@@ -168,13 +161,8 @@ Tensor qwen3_mlp_avx_internal(
     size_t hidden_size = hidden_shape[2];
     size_t intermediate_size = gate_proj.shape()[0];
 
-    std::cerr << "DEBUG MLP: batch=" << batch << ", seq_len=" << seq_len
-              << ", hidden_size=" << hidden_size
-              << ", intermediate_size=" << intermediate_size << std::endl;
-
     // Gate projection with AVX2
     size_t gate_data_size = batch * seq_len * intermediate_size;
-    std::cerr << "DEBUG: Allocating gate_data, size=" << gate_data_size << std::endl;
     std::vector<float> gate_data(gate_data_size);
 
     #pragma omp parallel for if(batch * seq_len * intermediate_size > 1000)
@@ -363,17 +351,12 @@ Tensor qwen3_decoder_layer_avx_v2(
 ) {
     static int layer_count = 0;
     if (layer_count == 0) {
-        std::cerr << "DEBUG MLP weights: gate_mlp shape=[" << gate_mlp.shape()[0] << ", " << gate_mlp.shape()[1] << "]" << std::endl;
-        std::cerr << "DEBUG MLP weights: up_mlp shape=[" << up_mlp.shape()[0] << ", " << up_mlp.shape()[1] << "]" << std::endl;
-        std::cerr << "DEBUG MLP weights: down_mlp shape=[" << down_mlp.shape()[0] << ", " << down_mlp.shape()[1] << "]" << std::endl;
     }
-    std::cerr << "DEBUG: qwen3_decoder_layer_avx_v2 call #" << layer_count++ << std::endl;
 
     // Input layernorm
     Tensor residual = hidden_states;
     Tensor hidden = rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
 
-    std::cerr << "DEBUG: Calling attention..." << std::endl;
     // Self-attention with AVX2 (uses pre-extracted QKV)
     Tensor attn_output = qwen3_attention_avx_v2(
         hidden, num_attention_heads, num_key_value_heads, head_dim,
@@ -383,19 +366,16 @@ Tensor qwen3_decoder_layer_avx_v2(
     // Residual
     hidden = residual + attn_output;
 
-    std::cerr << "DEBUG: Post-attention layernorm..." << std::endl;
     // Post-attention layernorm
     residual = hidden;
     hidden = rms_norm(hidden, &post_attention_layernorm_weight, rms_norm_eps);
 
-    std::cerr << "DEBUG: Calling MLP..." << std::endl;
     // MLP with AVX2
     Tensor mlp_output = qwen3_mlp_avx_internal(hidden, gate_mlp, up_mlp, down_mlp);
 
     // Residual
     hidden = residual + mlp_output;
 
-    std::cerr << "DEBUG: Decoder layer completed" << std::endl;
     return hidden;
 }
 
@@ -426,17 +406,6 @@ Tensor qwen3_forward_avx_v2(
     // Process through layers (using pre-extracted QKV projections)
     for (size_t layer_idx = 0; layer_idx < num_layers; ++layer_idx) {
         const auto& layer = layers[layer_idx];
-
-        // Debug output
-        if (layer_idx == 0) {
-            std::cerr << "DEBUG: Starting layer 0, hidden_states shape: ["
-                      << hidden_states.shape()[0] << ", "
-                      << hidden_states.shape()[1] << ", "
-                      << hidden_states.shape()[2] << "]" << std::endl;
-            std::cerr << "DEBUG: q_proj shape: ["
-                      << layer.q_proj.shape()[0] << ", "
-                      << layer.q_proj.shape()[1] << "]" << std::endl;
-        }
 
         hidden_states = qwen3_decoder_layer_avx_v2(
             hidden_states,

@@ -33,12 +33,8 @@ Tensor self_attention_avx2(
     size_t seq_len = q_shape[2];
     size_t head_dim = q_shape[3];
 
-    std::cerr << "DEBUG self_attention: batch=" << batch << ", heads=" << num_heads
-              << ", seq_len=" << seq_len << ", head_dim=" << head_dim << std::endl;
-
     // Output: [batch, num_heads, seq_len, head_dim]
     size_t output_size = batch * num_heads * seq_len * head_dim;
-    std::cerr << "DEBUG: Allocating output_data, size=" << output_size << std::endl;
     std::vector<float> output_data(output_size);
 
     #pragma omp parallel for if(batch * num_heads * seq_len > 10)
@@ -170,11 +166,6 @@ Tensor linear_avx2(
     for (size_t i = 0; i < ndim - 1; ++i) {
         num_samples *= input.shape()[i];
     }
-
-    std::cerr << "DEBUG linear_avx2: num_samples=" << num_samples
-              << ", in_features=" << in_features
-              << ", out_features=" << out_features
-              << ", output_size=" << (num_samples * out_features) << std::endl;
 
     std::vector<float> output(num_samples * out_features, 0.0f);
 

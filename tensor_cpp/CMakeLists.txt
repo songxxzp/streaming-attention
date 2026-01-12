@@ -74,14 +74,6 @@ target_link_libraries(test_qwen3_generate_with_cache PRIVATE tensor_cpp)
 add_executable(test_qwen3_verify tests/test_qwen3_verify.cpp)
 target_link_libraries(test_qwen3_verify PRIVATE tensor_cpp)
 
-add_executable(test_qwen3_logits tests/test_qwen3_logits.cpp)
-target_link_libraries(test_qwen3_logits PRIVATE tensor_cpp)
-
-add_executable(debug_kv_cache tests/debug_kv_cache.cpp)
-target_link_libraries(debug_kv_cache PRIVATE tensor_cpp)
-
-add_executable(debug_cache_data tests/debug_cache_data.cpp)
-target_link_libraries(debug_cache_data PRIVATE tensor_cpp)
 
 add_executable(benchmark_attention tests/benchmark_attention.cpp)
 target_link_libraries(benchmark_attention PRIVATE tensor_cpp)
@@ -107,20 +99,8 @@ target_link_libraries(test_tensor_parallel PRIVATE tensor_cpp MPI::MPI_CXX OpenM
 add_executable(benchmark_qwen3_versions tests/benchmark_qwen3_versions.cpp)
 target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
-add_executable(benchmark_qwen3_decode_versions tests/benchmark_qwen3_decode_versions.cpp)
-target_link_libraries(benchmark_qwen3_decode_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
-
 add_executable(benchmark_avx2_versions tests/benchmark_avx2_versions.cpp)
 target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
-
-add_executable(test_avx2_v2 tests/test_avx2_v2.cpp)
-target_link_libraries(test_avx2_v2 PRIVATE tensor_cpp)
-
-add_executable(test_avx2_mlp_only tests/test_avx2_mlp_only.cpp)
-target_link_libraries(test_avx2_mlp_only PRIVATE tensor_cpp)
-
-add_executable(test_mpi_linear_debug tests/test_mpi_linear_debug.cpp)
-target_link_libraries(test_mpi_linear_debug PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
 add_executable(test_qwen3_mpi_simple tests/test_qwen3_mpi_simple.cpp)
 target_link_libraries(test_qwen3_mpi_simple PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
@@ -131,10 +111,6 @@ target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX Ope
 add_executable(profile_avx2 tests/profile_avx2.cpp)
 target_link_libraries(profile_avx2 PRIVATE tensor_cpp)
 set_source_files_properties(tests/profile_avx2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
-
-add_executable(simple_avx2_profile tests/simple_avx2_profile.cpp)
-target_link_libraries(simple_avx2_profile PRIVATE)
-set_source_files_properties(tests/simple_avx2_profile.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)

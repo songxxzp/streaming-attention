@@ -117,6 +117,12 @@ target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX O
 add_executable(benchmark_avx2_versions tests/benchmark/benchmark_avx2_versions.cpp)
 target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
 
+add_executable(benchmark_kv_cache_speedup tests/benchmark/benchmark_kv_cache_speedup.cpp)
+target_link_libraries(benchmark_kv_cache_speedup PRIVATE tensor_cpp)
+
+add_executable(benchmark_kv_cache_correct tests/benchmark/benchmark_kv_cache_correct.cpp)
+target_link_libraries(benchmark_kv_cache_correct PRIVATE tensor_cpp)
+
 # Validation/Profiling Tests
 add_executable(torch_validation tests/validation/torch_validation.cpp)
 target_link_libraries(torch_validation PRIVATE tensor_cpp)

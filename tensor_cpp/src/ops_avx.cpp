@@ -195,6 +195,8 @@ float dot_avx(const float* x, const float* y, int size) {
     float temp[8];
     _mm256_storeu_ps(temp, sum0);
     result = temp[0] + temp[4];
+#else
+    int i = 0;  // Declare i for non-AVX2 path
 #endif
 
     // Handle remaining elements

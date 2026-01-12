@@ -45,6 +45,13 @@ target_link_libraries(tensor_cpp PUBLIC
     OpenMP::OpenMP_CXX
 )
 
+# Add AVX2 compile flags for AVX source files
+set_source_files_properties(src/ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+set_source_files_properties(src/qwen3_ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+set_source_files_properties(src/qwen3_ops_mpi_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+set_source_files_properties(src/attention_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+set_source_files_properties(src/qwen3_ops_avx_v2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+
 # Test executables
 add_executable(test_ops tests/test_ops.cpp)
 target_link_libraries(test_ops PRIVATE tensor_cpp)
@@ -109,6 +116,9 @@ target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
 add_executable(test_avx2_v2 tests/test_avx2_v2.cpp)
 target_link_libraries(test_avx2_v2 PRIVATE tensor_cpp)
 
+add_executable(test_avx2_mlp_only tests/test_avx2_mlp_only.cpp)
+target_link_libraries(test_avx2_mlp_only PRIVATE tensor_cpp)
+
 add_executable(test_mpi_linear_debug tests/test_mpi_linear_debug.cpp)
 target_link_libraries(test_mpi_linear_debug PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
@@ -120,9 +130,11 @@ target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX Ope
 
 add_executable(profile_avx2 tests/profile_avx2.cpp)
 target_link_libraries(profile_avx2 PRIVATE tensor_cpp)
+set_source_files_properties(tests/profile_avx2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
 add_executable(simple_avx2_profile tests/simple_avx2_profile.cpp)
 target_link_libraries(simple_avx2_profile PRIVATE)
+set_source_files_properties(tests/simple_avx2_profile.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)

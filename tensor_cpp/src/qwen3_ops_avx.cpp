@@ -80,7 +80,8 @@ Tensor qwen3_mlp_avx(
         }
     }
 
-    Tensor gate(std::move(gate_data), Shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)}));
+    Shape gate_shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)});
+    Tensor gate(std::move(gate_data), gate_shape);
 
     // Compute up projection: [batch, seq_len, intermediate_size]
     std::vector<float> up_data(batch * seq_len * intermediate_size);
@@ -126,40 +127,39 @@ Tensor qwen3_mlp_avx(
         }
     }
 
-    Tensor up(std::move(up_data), Shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)}));
+    Shape up_shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)});
+    Tensor up(std::move(up_data), up_shape);
 
     // SwiGLU activation: gate * sigmoid(up) with AVX2
+    // Note: Not using OpenMP here as it's already vectorized with AVX2
     std::vector<float> swiglu_data(batch * seq_len * intermediate_size);
 
-    #pragma omp parallel for if(batch * seq_len * intermediate_size > 1000)
-    for (size_t i = 0; i < batch * seq_len * intermediate_size; i += 8) {
-        if (i + 8 <= batch * seq_len * intermediate_size) {
-            __m256 gate_vec = _mm256_loadu_ps(&gate[i]);
-            __m256 up_vec = _mm256_loadu_ps(&up[i]);
+    for (size_t i = 0; i + 8 <= batch * seq_len * intermediate_size; i += 8) {
+        __m256 gate_vec = _mm256_loadu_ps(&gate[i]);
+        __m256 up_vec = _mm256_loadu_ps(&up[i]);
 
-            // sigmoid(up) = 1 / (1 + exp(-up))
-            // Approximate with fast sigmoid: x / (1 + |x|)
-            // Manual abs for AVX2
-            __m256 sign_mask = _mm256_set1_ps(-0.0f);
-            __m256 abs_up = _mm256_andnot_ps(sign_mask, up_vec);  // abs(x) = x & ~sign_bit
-            __m256 ones = _mm256_set1_ps(1.0f);
-            __m256 sigmoid = _mm256_div_ps(up_vec, _mm256_add_ps(abs_up, ones));
+        // sigmoid(up) = 1 / (1 + exp(-up))
+        // Approximate with fast sigmoid: x / (1 + |x|)
+        // Manual abs for AVX2
+        __m256 sign_mask = _mm256_set1_ps(-0.0f);
+        __m256 abs_up = _mm256_andnot_ps(sign_mask, up_vec);  // abs(x) = x & ~sign_bit
+        __m256 ones = _mm256_set1_ps(1.0f);
+        __m256 sigmoid = _mm256_div_ps(up_vec, _mm256_add_ps(abs_up, ones));
 
-            // SwiGLU = gate * sigmoid(up)
-            __m256 result = _mm256_mul_ps(gate_vec, sigmoid);
+        // SwiGLU = gate * sigmoid(up)
+        __m256 result = _mm256_mul_ps(gate_vec, sigmoid);
 
-            _mm256_storeu_ps(&swiglu_data[i], result);
-        } else {
-            // Handle remaining elements
-            for (size_t j = i; j < batch * seq_len * intermediate_size; ++j) {
-                float up_val = up[j];
-                float sigmoid_val = up_val / (1.0f + std::abs(up_val));  // Fast sigmoid
-                swiglu_data[j] = gate[j] * sigmoid_val;
-            }
-        }
+        _mm256_storeu_ps(&swiglu_data[i], result);
     }
 
-    Tensor swiglu(std::move(swiglu_data), swiglu.shape());
+    // Handle remaining elements
+    for (size_t i = (batch * seq_len * intermediate_size / 8) * 8; i < batch * seq_len * intermediate_size; ++i) {
+        float up_val = up[i];
+        float sigmoid_val = up_val / (1.0f + std::abs(up_val));  // Fast sigmoid
+        swiglu_data[i] = gate[i] * sigmoid_val;
+    }
+
+    Tensor swiglu(std::move(swiglu_data), gate.shape());
 
     // Down projection: [batch, seq_len, hidden_size]
     std::vector<float> output_data(batch * seq_len * hidden_size);
@@ -205,7 +205,8 @@ Tensor qwen3_mlp_avx(
         }
     }
 
-    return Tensor(std::move(output_data), hidden_shape);
+    Shape output_shape(hidden_shape);
+    return Tensor(std::move(output_data), output_shape);
 }
 
 // ============================================================================

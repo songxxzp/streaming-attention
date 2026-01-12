@@ -1,10 +1,10 @@
 /**
- * @file qwen3_ops_avx_v2.h
+ * @file qwen3_ops_avx.h
  * @brief AVX2-optimized Qwen3 operators with pre-extracted QKV projections
  */
 
-#ifndef TENSOR_CPP_QWEN3_OPS_AVX_V2_H
-#define TENSOR_CPP_QWEN3_OPS_AVX_V2_H
+#ifndef TENSOR_CPP_QWEN3_OPS_AVX_H
+#define TENSOR_CPP_QWEN3_OPS_AVX_H
 
 #include "tensor_cpp/tensor.h"
 #include "tensor_cpp/qwen3_ops.h"
@@ -13,7 +13,7 @@
 
 namespace tensor_cpp {
 namespace qwen3 {
-namespace avx2_v2 {
+namespace avx2 {
 
 /**
  * @brief AVX2-optimized Qwen3 attention with pre-extracted QKV projections
@@ -21,7 +21,7 @@ namespace avx2_v2 {
  * Uses pre-extracted q_proj, k_proj, v_proj to avoid repeated matrix copying.
  * All dot products use AVX2 instructions.
  */
-Tensor qwen3_attention_avx_v2(
+Tensor qwen3_attention_avx(
     const Tensor& hidden_states,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -39,7 +39,7 @@ Tensor qwen3_attention_avx_v2(
 /**
  * @brief AVX2-optimized Qwen3 decoder layer with pre-extracted QKV
  */
-Tensor qwen3_decoder_layer_avx_v2(
+Tensor qwen3_decoder_layer_avx(
     const Tensor& hidden_states,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -63,7 +63,7 @@ Tensor qwen3_decoder_layer_avx_v2(
 /**
  * @brief Complete AVX2-optimized Qwen3 forward pass with pre-extracted QKV
  */
-Tensor qwen3_forward_avx_v2(
+Tensor qwen3_forward_avx(
     const TensorL& input_ids,
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
@@ -75,49 +75,17 @@ Tensor qwen3_forward_avx_v2(
     float rms_norm_eps
 );
 
-} // namespace avx2_v2
+/**
+ * @brief AVX2-optimized MLP (SwiGLU)
+ */
+Tensor qwen3_mlp_avx(
+    const Tensor& hidden_states,
+    const Tensor& gate_proj,
+    const Tensor& up_proj,
+    const Tensor& down_proj
+);
 
-// Alias for backwards compatibility
-namespace avx2 {
-    // Forward declarations
-    Tensor qwen3_forward_avx(
-        const TensorL& input_ids,
-        const Tensor& token_embedding,
-        const std::vector<Qwen3LayerWeights>& layers,
-        const Tensor& norm_weight,
-        size_t num_layers,
-        size_t num_attention_heads,
-        size_t num_key_value_heads,
-        size_t head_dim,
-        float rms_norm_eps
-    );
-
-    Tensor qwen3_mlp_avx(
-        const Tensor& hidden_states,
-        const Tensor& gate_proj,
-        const Tensor& up_proj,
-        const Tensor& down_proj
-    );
-
-    // Implementation that forwards to avx2_v2
-    inline Tensor qwen3_forward_avx(
-        const TensorL& input_ids,
-        const Tensor& token_embedding,
-        const std::vector<Qwen3LayerWeights>& layers,
-        const Tensor& norm_weight,
-        size_t num_layers,
-        size_t num_attention_heads,
-        size_t num_key_value_heads,
-        size_t head_dim,
-        float rms_norm_eps
-    ) {
-        return avx2_v2::qwen3_forward_avx_v2(
-            input_ids, token_embedding, layers, norm_weight,
-            num_layers, num_attention_heads, num_key_value_heads,
-            head_dim, rms_norm_eps
-        );
-    }
-}
+} // namespace avx2
 
 } // namespace qwen3
 } // namespace tensor_cpp

@@ -1,6 +1,6 @@
 /**
  * @file benchmark_avx2_versions.cpp
- * @brief Compare Baseline, AVX2 (old), and AVX2 V2 (optimized) performance
+ * @brief Compare Baseline vs AVX2 performance
  */
 
 #include "tensor_cpp/qwen3_loader.h"
@@ -25,7 +25,7 @@ public:
 
 void print_header() {
     std::cout << "\n============================================================\n";
-    std::cout << "     Qwen3 AVX2 V2 Optimization Benchmark\n";
+    std::cout << "     Qwen3 Baseline vs AVX2 Performance\n";
     std::cout << "============================================================\n";
     #ifdef _OPENMP
     std::cout << "OpenMP threads: " << omp_get_max_threads() << "\n";
@@ -57,20 +57,8 @@ void benchmark_forward_pass(
             weights.head_dim,
             1e-6f
         );
-    } else if (version == "AVX2 (old)") {
+    } else if (version == "AVX2") {
         output = avx2::qwen3_forward_avx(
-            input_ids,
-            weights.embed_tokens,
-            weights.layers,
-            weights.norm_weight,
-            weights.num_layers,
-            weights.num_attention_heads,
-            weights.num_key_value_heads,
-            weights.head_dim,
-            1e-6f
-        );
-    } else if (version == "AVX2 V2 (optimized)") {
-        output = avx2_v2::qwen3_forward_avx_v2(
             input_ids,
             weights.embed_tokens,
             weights.layers,
@@ -142,8 +130,7 @@ int main() {
 
             // Benchmark each version
             benchmark_forward_pass("Baseline", input_ids, weights);
-            benchmark_forward_pass("AVX2 (old)", input_ids, weights);
-            benchmark_forward_pass("AVX2 V2 (optimized)", input_ids, weights);
+            benchmark_forward_pass("AVX2", input_ids, weights);
         }
 
         std::cout << "\n============================================================\n";

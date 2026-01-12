@@ -52,65 +52,83 @@ set_source_files_properties(src/qwen3_ops_mpi_avx.cpp PROPERTIES COMPILE_FLAGS "
 set_source_files_properties(src/attention_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/qwen3_ops_avx_v2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
-# Test executables
-add_executable(test_ops tests/test_ops.cpp)
+# ==============================================================================
+# Test Executables - Organized by category
+# ==============================================================================
+
+# Unit Tests
+add_executable(test_simple tests/unit/test_simple.cpp)
+target_link_libraries(test_simple PRIVATE tensor_cpp)
+
+add_executable(test_ops tests/unit/test_ops.cpp)
 target_link_libraries(test_ops PRIVATE tensor_cpp)
 
-add_executable(test_attention tests/test_attention.cpp)
+add_executable(test_attention tests/unit/test_attention.cpp)
 target_link_libraries(test_attention PRIVATE tensor_cpp)
 
-add_executable(test_qwen3 tests/test_qwen3.cpp)
-target_link_libraries(test_qwen3 PRIVATE tensor_cpp)
+add_executable(test_streaming_attention tests/unit/test_streaming_attention.cpp)
+target_link_libraries(test_streaming_attention PRIVATE tensor_cpp)
 
-add_executable(test_qwen3_decode tests/test_qwen3_decode.cpp)
-target_link_libraries(test_qwen3_decode PRIVATE tensor_cpp)
-
-add_executable(test_qwen3_generate tests/test_qwen3_generate.cpp)
-target_link_libraries(test_qwen3_generate PRIVATE tensor_cpp)
-
-add_executable(test_qwen3_generate_with_cache tests/test_qwen3_generate_with_cache.cpp)
-target_link_libraries(test_qwen3_generate_with_cache PRIVATE tensor_cpp)
-
-add_executable(test_qwen3_verify tests/test_qwen3_verify.cpp)
-target_link_libraries(test_qwen3_verify PRIVATE tensor_cpp)
-
-
-add_executable(benchmark_attention tests/benchmark_attention.cpp)
-target_link_libraries(benchmark_attention PRIVATE tensor_cpp)
-
-add_executable(benchmark_qwen3 tests/benchmark_qwen3.cpp)
-target_link_libraries(benchmark_qwen3 PRIVATE tensor_cpp)
-
-add_executable(test_mpi_simple tests/test_mpi_simple.cpp)
-target_link_libraries(test_mpi_simple PRIVATE MPI::MPI_CXX OpenMP::OpenMP_CXX)
-
-add_executable(test_mpi_ops tests/test_mpi_ops.cpp)
-target_link_libraries(test_mpi_ops PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
-
-add_executable(test_avx_ops tests/test_avx_ops.cpp)
+add_executable(test_avx_ops tests/unit/test_avx_ops.cpp)
 target_link_libraries(test_avx_ops PRIVATE tensor_cpp)
 
-add_executable(benchmark_performance tests/benchmark_performance.cpp)
-target_link_libraries(benchmark_performance PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+add_executable(test_mpi_simple tests/unit/test_mpi_simple.cpp)
+target_link_libraries(test_mpi_simple PRIVATE MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
-add_executable(test_tensor_parallel tests/test_tensor_parallel.cpp)
+add_executable(test_mpi_ops tests/unit/test_mpi_ops.cpp)
+target_link_libraries(test_mpi_ops PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(test_tensor_parallel tests/unit/test_tensor_parallel.cpp)
 target_link_libraries(test_tensor_parallel PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
-add_executable(benchmark_qwen3_versions tests/benchmark_qwen3_versions.cpp)
-target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
-
-add_executable(benchmark_avx2_versions tests/benchmark_avx2_versions.cpp)
-target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
-
-add_executable(test_qwen3_mpi_simple tests/test_qwen3_mpi_simple.cpp)
-target_link_libraries(test_qwen3_mpi_simple PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
-
-add_executable(test_weights_broadcast tests/test_weights_broadcast.cpp)
+add_executable(test_weights_broadcast tests/unit/test_weights_broadcast.cpp)
 target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
-add_executable(profile_avx2 tests/profile_avx2.cpp)
+# Integration Tests
+add_executable(test_qwen3 tests/integration/test_qwen3.cpp)
+target_link_libraries(test_qwen3 PRIVATE tensor_cpp)
+
+add_executable(test_qwen3_verify tests/integration/test_qwen3_verify.cpp)
+target_link_libraries(test_qwen3_verify PRIVATE tensor_cpp)
+
+add_executable(test_qwen3_decode tests/integration/test_qwen3_decode.cpp)
+target_link_libraries(test_qwen3_decode PRIVATE tensor_cpp)
+
+add_executable(test_qwen3_generate tests/integration/test_qwen3_generate.cpp)
+target_link_libraries(test_qwen3_generate PRIVATE tensor_cpp)
+
+add_executable(test_qwen3_generate_with_cache tests/integration/test_qwen3_generate_with_cache.cpp)
+target_link_libraries(test_qwen3_generate_with_cache PRIVATE tensor_cpp)
+
+add_executable(test_qwen3_mpi_simple tests/integration/test_qwen3_mpi_simple.cpp)
+target_link_libraries(test_qwen3_mpi_simple PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+# Benchmark Tests
+add_executable(benchmark_attention tests/benchmark/benchmark_attention.cpp)
+target_link_libraries(benchmark_attention PRIVATE tensor_cpp)
+
+add_executable(benchmark_qwen3 tests/benchmark/benchmark_qwen3.cpp)
+target_link_libraries(benchmark_qwen3 PRIVATE tensor_cpp)
+
+add_executable(benchmark_performance tests/benchmark/benchmark_performance.cpp)
+target_link_libraries(benchmark_performance PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(benchmark_qwen3_versions tests/benchmark/benchmark_qwen3_versions.cpp)
+target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
+add_executable(benchmark_avx2_versions tests/benchmark/benchmark_avx2_versions.cpp)
+target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
+
+# Validation/Profiling Tests
+add_executable(torch_validation tests/validation/torch_validation.cpp)
+target_link_libraries(torch_validation PRIVATE tensor_cpp)
+
+add_executable(test_align_qwen3 tests/validation/test_align_qwen3.cpp)
+target_link_libraries(test_align_qwen3 PRIVATE tensor_cpp)
+
+add_executable(profile_avx2 tests/validation/profile_avx2.cpp)
 target_link_libraries(profile_avx2 PRIVATE tensor_cpp)
-set_source_files_properties(tests/profile_avx2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
+set_source_files_properties(tests/validation/profile_avx2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
 # Example
 add_executable(basic_usage examples/basic_usage.cpp)

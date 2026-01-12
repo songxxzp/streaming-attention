@@ -6,7 +6,6 @@
 #include "tensor_cpp/qwen3_loader.h"
 #include "tensor_cpp/qwen3_ops.h"
 #include "tensor_cpp/qwen3_ops_avx.h"
-#include "tensor_cpp/qwen3_ops_avx_v2.h"
 #include <iostream>
 #include <iomanip>
 #include <chrono>

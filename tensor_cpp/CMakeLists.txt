@@ -32,7 +32,6 @@ set(TENSOR_SOURCES
     src/qwen3_ops_mpi.cpp
     src/ops_avx.cpp
     src/qwen3_ops_avx.cpp
-    src/qwen3_ops_avx_v2.cpp
     src/qwen3_ops_mpi_avx.cpp
     src/qwen3_tensor_parallel.cpp
     src/attention_avx.cpp
@@ -50,7 +49,6 @@ set_source_files_properties(src/ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mf
 set_source_files_properties(src/qwen3_ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/qwen3_ops_mpi_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/attention_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
-set_source_files_properties(src/qwen3_ops_avx_v2.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 
 # ==============================================================================
 # Test Executables - Organized by category

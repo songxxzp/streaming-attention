@@ -17,11 +17,12 @@ find_package(MPI)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Phase 1: Serial implementations
-add_executable(test_correctness
-    test_correctness.cpp
-    attention/naive_serial.cpp
-    attention/streaming_serial.cpp
-)
+# Disabled - test_correctness.cpp not found
+# add_executable(test_correctness
+#     test_correctness.cpp
+#     attention/naive_serial.cpp
+#     attention/streaming_serial.cpp
+# )
 
 # Phase 2: OpenMP version (to be implemented)
 # Disabled - test_omp.cpp not found

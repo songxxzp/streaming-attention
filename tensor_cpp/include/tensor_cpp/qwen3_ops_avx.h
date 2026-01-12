@@ -76,6 +76,49 @@ Tensor qwen3_forward_avx_v2(
 );
 
 } // namespace avx2_v2
+
+// Alias for backwards compatibility
+namespace avx2 {
+    // Forward declarations
+    Tensor qwen3_forward_avx(
+        const TensorL& input_ids,
+        const Tensor& token_embedding,
+        const std::vector<Qwen3LayerWeights>& layers,
+        const Tensor& norm_weight,
+        size_t num_layers,
+        size_t num_attention_heads,
+        size_t num_key_value_heads,
+        size_t head_dim,
+        float rms_norm_eps
+    );
+
+    Tensor qwen3_mlp_avx(
+        const Tensor& hidden_states,
+        const Tensor& gate_proj,
+        const Tensor& up_proj,
+        const Tensor& down_proj
+    );
+
+    // Implementation that forwards to avx2_v2
+    inline Tensor qwen3_forward_avx(
+        const TensorL& input_ids,
+        const Tensor& token_embedding,
+        const std::vector<Qwen3LayerWeights>& layers,
+        const Tensor& norm_weight,
+        size_t num_layers,
+        size_t num_attention_heads,
+        size_t num_key_value_heads,
+        size_t head_dim,
+        float rms_norm_eps
+    ) {
+        return avx2_v2::qwen3_forward_avx_v2(
+            input_ids, token_embedding, layers, norm_weight,
+            num_layers, num_attention_heads, num_key_value_heads,
+            head_dim, rms_norm_eps
+        );
+    }
+}
+
 } // namespace qwen3
 } // namespace tensor_cpp
 

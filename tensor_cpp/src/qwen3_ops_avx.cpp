@@ -3,7 +3,7 @@
  * @brief AVX2-optimized Qwen3 operators with pre-extracted QKV projections
  */
 
-#include "tensor_cpp/qwen3_ops_avx_v2.h"
+#include "tensor_cpp/qwen3_ops_avx.h"
 #include "tensor_cpp/ops.h"
 #include "tensor_cpp/attention_avx.h"
 #include "tensor_cpp/qwen3_ops.h"
@@ -12,6 +12,7 @@
 #include <algorithm>
 
 using namespace tensor_cpp::ops;
+using namespace tensor_cpp::ops::avx2;
 
 namespace tensor_cpp {
 namespace qwen3 {
@@ -48,11 +49,11 @@ Tensor qwen3_attention_avx_v2(
     Tensor hidden_reshaped = hidden_states.view({static_cast<long>(batch * seq_len), static_cast<long>(hidden_size)});
 
     std::cerr << "DEBUG: Computing Q projection..." << std::endl;
-    Tensor q_proj_out = avx2::linear_avx2(hidden_reshaped, q_proj, nullptr);
+    Tensor q_proj_out = linear_avx2(hidden_reshaped, q_proj, nullptr);
     std::cerr << "DEBUG: Computing K projection..." << std::endl;
-    Tensor k_proj_out = avx2::linear_avx2(hidden_reshaped, k_proj, nullptr);
+    Tensor k_proj_out = linear_avx2(hidden_reshaped, k_proj, nullptr);
     std::cerr << "DEBUG: Computing V projection..." << std::endl;
-    Tensor v_proj_out = avx2::linear_avx2(hidden_reshaped, v_proj, nullptr);
+    Tensor v_proj_out = linear_avx2(hidden_reshaped, v_proj, nullptr);
 
     // Reshape to [batch, num_heads, seq_len, head_dim]
     size_t q_total_heads = num_attention_heads;
@@ -135,7 +136,7 @@ Tensor qwen3_attention_avx_v2(
     Tensor causal_mask = create_causal_mask(seq_len);
     Tensor mask = causal_mask.view({1, 1, seq_len, seq_len});
 
-    Tensor attn_output = avx2::self_attention_avx2(q_rope, k_repeated, v_repeated, &mask, scale);
+    Tensor attn_output = self_attention_avx2(q_rope, k_repeated, v_repeated, &mask, scale);
 
     // Transpose back: [batch, seq_len, num_heads, head_dim]
     Tensor attn_output_t = attn_output.transpose(1, 2);
@@ -144,7 +145,7 @@ Tensor qwen3_attention_avx_v2(
     Tensor attn_output_reshaped = attn_output_t.contiguous().view({batch, seq_len, q_total_heads * head_dim});
 
     // Apply output projection with AVX2
-    Tensor output = avx2::linear_avx2(attn_output_reshaped, o_proj, nullptr);
+    Tensor output = linear_avx2(attn_output_reshaped, o_proj, nullptr);
 
     return output;
 }
@@ -466,5 +467,186 @@ Tensor qwen3_forward_avx_v2(
 }
 
 } // namespace avx2_v2
+
+// Export MLP function for avx2 namespace
+namespace avx2 {
+
+Tensor qwen3_mlp_avx(
+    const Tensor& hidden_states,
+    const Tensor& gate_proj,
+    const Tensor& up_proj,
+    const Tensor& down_proj
+) {
+    // Forward to avx2_v2 namespace (internal implementation)
+    // Since qwen3_mlp_avx_internal is in anonymous namespace,
+    // we need to re-implement or expose it
+    const Shape& hidden_shape = hidden_states.shape();
+    size_t batch = hidden_shape[0];
+    size_t seq_len = hidden_shape[1];
+    size_t hidden_size = hidden_shape[2];
+    size_t intermediate_size = gate_proj.shape()[0];
+
+    // Gate projection with AVX2
+    size_t gate_data_size = batch * seq_len * intermediate_size;
+    std::vector<float> gate_data(gate_data_size);
+
+    #pragma omp parallel for if(batch * seq_len * intermediate_size > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t s = 0; s < seq_len; ++s) {
+            size_t row_offset = (b * seq_len + s) * intermediate_size;
+            size_t input_offset = (b * seq_len + s) * hidden_size;
+
+            for (size_t i = 0; i < intermediate_size; ++i) {
+                float sum = 0.0f;
+                size_t weight_offset = i * hidden_size;
+                size_t j = 0;
+
+                __m256 sum_vec = _mm256_setzero_ps();
+                for (; j + 8 <= hidden_size; j += 8) {
+                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_states[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&gate_proj[weight_offset + j]);
+                    sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
+                }
+
+                // Improved horizontal sum
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
+
+                for (; j < hidden_size; ++j) {
+                    sum += hidden_states[input_offset + j] * gate_proj[weight_offset + j];
+                }
+
+                gate_data[row_offset + i] = sum;
+            }
+        }
+    }
+
+    Shape gate_shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)});
+    Tensor gate(std::move(gate_data), gate_shape);
+
+    // Up projection with AVX2
+    std::vector<float> up_data(batch * seq_len * intermediate_size);
+
+    #pragma omp parallel for if(batch * seq_len * intermediate_size > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t s = 0; s < seq_len; ++s) {
+            size_t row_offset = (b * seq_len + s) * intermediate_size;
+            size_t input_offset = (b * seq_len + s) * hidden_size;
+
+            for (size_t i = 0; i < intermediate_size; ++i) {
+                float sum = 0.0f;
+                size_t weight_offset = i * hidden_size;
+                size_t j = 0;
+
+                __m256 sum_vec = _mm256_setzero_ps();
+                for (; j + 8 <= hidden_size; j += 8) {
+                    __m256 hidden_vec = _mm256_loadu_ps(&hidden_states[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&up_proj[weight_offset + j]);
+                    sum_vec = _mm256_fmadd_ps(hidden_vec, weight_vec, sum_vec);
+                }
+
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
+
+                for (; j < hidden_size; ++j) {
+                    sum += hidden_states[input_offset + j] * up_proj[weight_offset + j];
+                }
+
+                up_data[row_offset + i] = sum;
+            }
+        }
+    }
+
+    Shape up_shape({static_cast<long>(batch), static_cast<long>(seq_len), static_cast<long>(intermediate_size)});
+    Tensor up(std::move(up_data), up_shape);
+
+    // SwiGLU activation with AVX2
+    std::vector<float> swiglu_data(batch * seq_len * intermediate_size);
+
+    for (size_t i = 0; i + 8 <= batch * seq_len * intermediate_size; i += 8) {
+        __m256 gate_vec = _mm256_loadu_ps(&gate[i]);
+        __m256 up_vec = _mm256_loadu_ps(&up[i]);
+
+        // Fast sigmoid approximation
+        __m256 sign_mask = _mm256_set1_ps(-0.0f);
+        __m256 abs_up = _mm256_andnot_ps(sign_mask, up_vec);
+        __m256 ones = _mm256_set1_ps(1.0f);
+        __m256 sigmoid = _mm256_div_ps(up_vec, _mm256_add_ps(abs_up, ones));
+
+        __m256 result = _mm256_mul_ps(gate_vec, sigmoid);
+        _mm256_storeu_ps(&swiglu_data[i], result);
+    }
+
+    // Handle remaining elements
+    for (size_t i = (batch * seq_len * intermediate_size / 8) * 8; i < batch * seq_len * intermediate_size; ++i) {
+        float up_val = up[i];
+        float sigmoid_val = up_val / (1.0f + std::abs(up_val));
+        swiglu_data[i] = gate[i] * sigmoid_val;
+    }
+
+    Tensor swiglu(std::move(swiglu_data), gate.shape());
+
+    // Down projection with AVX2
+    std::vector<float> output_data(batch * seq_len * hidden_size);
+
+    #pragma omp parallel for if(batch * seq_len * hidden_size > 1000)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t s = 0; s < seq_len; ++s) {
+            size_t row_offset = (b * seq_len + s) * hidden_size;
+            size_t input_offset = (b * seq_len + s) * intermediate_size;
+
+            for (size_t i = 0; i < hidden_size; ++i) {
+                float sum = 0.0f;
+                size_t weight_offset = i * intermediate_size;
+                size_t j = 0;
+
+                __m256 sum_vec = _mm256_setzero_ps();
+                for (; j + 8 <= intermediate_size; j += 8) {
+                    __m256 swiglu_vec = _mm256_loadu_ps(&swiglu[input_offset + j]);
+                    __m256 weight_vec = _mm256_loadu_ps(&down_proj[weight_offset + j]);
+                    sum_vec = _mm256_fmadd_ps(swiglu_vec, weight_vec, sum_vec);
+                }
+
+                __m128 hi_quad = _mm256_extractf128_ps(sum_vec, 1);
+                __m128 lo_quad = _mm256_castps256_ps128(sum_vec);
+                __m128 sum_quad = _mm_add_ps(lo_quad, hi_quad);
+                __m128 lo_dual = sum_quad;
+                __m128 hi_dual = _mm_movehl_ps(sum_quad, sum_quad);
+                __m128 sum_dual = _mm_add_ps(lo_dual, hi_dual);
+                __m128 lo = sum_dual;
+                __m128 hi = _mm_shuffle_ps(sum_dual, sum_dual, 1);
+                __m128 sum_128 = _mm_add_ss(lo, hi);
+                sum = _mm_cvtss_f32(sum_128);
+
+                for (; j < intermediate_size; ++j) {
+                    sum += swiglu[input_offset + j] * down_proj[weight_offset + j];
+                }
+
+                output_data[row_offset + i] = sum;
+            }
+        }
+    }
+
+    Shape output_shape(hidden_shape);
+    return Tensor(std::move(output_data), output_shape);
+}
+
+} // namespace avx2
 } // namespace qwen3
 } // namespace tensor_cpp

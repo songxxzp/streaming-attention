@@ -85,6 +85,48 @@ Tensor qwen3_mlp_avx(
     const Tensor& down_proj
 );
 
+/**
+ * @brief AVX2-optimized Qwen3 decoder layer with KV cache support
+ */
+Tensor qwen3_decoder_layer_avx_with_cache(
+    const Tensor& hidden_states,
+    KVCache* kv_cache,
+    size_t layer_idx,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& q_proj,
+    const Tensor& k_proj,
+    const Tensor& v_proj,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin
+);
+
+/**
+ * @brief AVX2-optimized Qwen3 forward pass with KV cache support
+ */
+Tensor qwen3_forward_avx_with_cache(
+    const TensorL& input_ids,
+    KVCache* kv_cache,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps
+);
+
 } // namespace avx2
 
 } // namespace qwen3

@@ -271,6 +271,96 @@ Tensor qwen3_forward_mpi_omp(
     return hidden_states;
 }
 
+// ============================================================================
+// MPI+OpenMP Decoder Layer with KV Cache Support
+// ============================================================================
+
+Tensor qwen3_decoder_layer_mpi_omp_with_cache(
+    const Tensor& hidden_states,
+    KVCache* kv_cache,
+    size_t layer_idx,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm
+) {
+    // For now, delegate to the baseline implementation with KV cache
+    // TODO: Optimize with MPI data parallelism for MLP and attention
+    return qwen3::qwen3_decoder_layer_with_cache(
+        hidden_states,
+        kv_cache,
+        layer_idx,
+        num_attention_heads,
+        num_key_value_heads,
+        head_dim,
+        rms_norm_eps,
+        input_layernorm_weight,
+        qkv_projs,
+        o_proj,
+        q_norm_weight,
+        k_norm_weight,
+        post_attention_layernorm_weight,
+        gate_mlp,
+        up_mlp,
+        down_mlp,
+        cos,
+        sin
+    );
+}
+
+// ============================================================================
+// MPI+OpenMP Forward Pass with KV Cache Support
+// ============================================================================
+
+Tensor qwen3_forward_mpi_omp_with_cache(
+    const TensorL& input_ids,
+    KVCache* kv_cache,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    MPI_Comm comm
+) {
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // For now, delegate to baseline implementation with KV cache
+    // TODO: Optimize with MPI data parallelism
+    // All ranks compute the same result (data parallelism not yet implemented for cache)
+
+    Tensor result = qwen3::qwen3_forward_with_cache(
+        input_ids,
+        kv_cache,
+        token_embedding,
+        layers,
+        norm_weight,
+        num_layers,
+        num_attention_heads,
+        num_key_value_heads,
+        head_dim,
+        rms_norm_eps
+    );
+
+    return result;
+}
+
 #endif // MPI_VERSION
 
 } // namespace mpi

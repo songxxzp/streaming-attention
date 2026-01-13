@@ -228,13 +228,14 @@ Tensor qwen3_decoder_layer(
  * @param num_key_value_heads Number of KV heads (8)
  * @param head_dim Head dimension (128)
  * @param rms_norm_eps RMS norm epsilon (1e-6)
- * @return Hidden states [batch_size, seq_len, hidden_size]
+ * @return Logits [batch_size, seq_len, vocab_size]
  */
 Tensor qwen3_forward(
     const TensorL& input_ids,
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -298,12 +299,13 @@ Tensor qwen3_decoder_layer_with_cache(
  * @param token_embedding Word embedding weight
  * @param layers List of decoder layer weights
  * @param norm_weight Final layer norm weight
+ * @param lm_head LM head weight
  * @param num_layers Number of layers (28)
  * @param num_attention_heads Number of attention heads (16)
  * @param num_key_value_heads Number of KV heads (8)
  * @param head_dim Head dimension (128)
  * @param rms_norm_eps RMS norm epsilon (1e-6)
- * @return Hidden states [batch_size, seq_len, hidden_size]
+ * @return Logits [batch_size, seq_len, vocab_size]
  */
 Tensor qwen3_forward_with_cache(
     const TensorL& input_ids,
@@ -311,6 +313,7 @@ Tensor qwen3_forward_with_cache(
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,

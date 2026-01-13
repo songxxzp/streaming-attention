@@ -73,6 +73,7 @@ int main() {
                     weights.embed_tokens,
                     weights.layers,
                     weights.norm_weight,
+                    weights.lm_head,
                     weights.num_layers,
                     weights.num_attention_heads,
                     weights.num_key_value_heads,

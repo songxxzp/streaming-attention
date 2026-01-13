@@ -70,6 +70,7 @@ int main(int argc, char** argv) {
             weights.embed_tokens,
             weights.layers,
             weights.norm_weight,
+            weights.lm_head,
             1,  // num_layers (use just 1 layer)
             weights.num_attention_heads,
             weights.num_key_value_heads,

@@ -37,13 +37,13 @@ int main() {
 
         // Run forward pass twice
         Tensor hidden_states1 = qwen3::qwen3_forward(
-            input_ids, weights.embed_tokens, weights.layers, weights.norm_weight,
+            input_ids, weights.embed_tokens, weights.layers, weights.norm_weight, weights.lm_head,
             weights.num_layers, weights.num_attention_heads, weights.num_key_value_heads,
             weights.head_dim, 1e-6f
         );
 
         Tensor hidden_states2 = qwen3::qwen3_forward(
-            input_ids, weights.embed_tokens, weights.layers, weights.norm_weight,
+            input_ids, weights.embed_tokens, weights.layers, weights.norm_weight, weights.lm_head,
             weights.num_layers, weights.num_attention_heads, weights.num_key_value_heads,
             weights.head_dim, 1e-6f
         );
@@ -102,7 +102,7 @@ int main() {
         TensorL input_ids2(input_ids_data2, input_shape);
 
         Tensor hidden_states3 = qwen3::qwen3_forward(
-            input_ids2, weights.embed_tokens, weights.layers, weights.norm_weight,
+            input_ids2, weights.embed_tokens, weights.layers, weights.norm_weight, weights.lm_head,
             weights.num_layers, weights.num_attention_heads, weights.num_key_value_heads,
             weights.head_dim, 1e-6f
         );

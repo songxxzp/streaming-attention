@@ -58,7 +58,10 @@ struct BenchmarkConfig {
     bool use_kv_cache = true;              // decode阶段是否使用KV cache
     bool compare_kv_cache = false;         // 对比所有方法的KV cache加速效果
     bool verify_mode = false;              // 验证模式
-    std::vector<long> verify_tokens;       // 验证模式下的输入token IDs
+    std::vector<long> verify_tokens = {
+        151644, 872, 198, 35127, 752, 264, 2805, 16800, 311, 3460,
+        4128, 1614, 13, 151645, 198, 151644, 77091, 198
+    };  // 默认测试tokens (17个)
 };
 
 void print_usage(const char* prog) {
@@ -77,7 +80,7 @@ void print_usage(const char* prog) {
               << "  --use-kv-cache        decode阶段使用KV cache\n"
               << "  --no-kv-cache         decode阶段不使用KV cache\n"
               << "  --compare-kv-cache    对比所有方法的KV cache加速效果\n"
-              << "  --verify TOKENS       验证模式：检查输出正确性 (如: --verify 72,101,108,108,111)\n"
+              << "  --verify [TOKENS]     验证模式：检查输出正确性 (可选指定tokens，否则使用默认值)\n"
               << "  --verbose             输出详细信息\n"
               << "  --help                显示帮助信息\n";
 }
@@ -112,26 +115,31 @@ BenchmarkConfig parse_args(int argc, char** argv) {
             cfg.use_kv_cache = false;
         } else if (strcmp(argv[i], "--compare-kv-cache") == 0) {
             cfg.compare_kv_cache = true;
-        } else if (strcmp(argv[i], "--verify") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--verify") == 0) {
             cfg.verify_mode = true;
-            // 解析token ID列表，格式: "72,101,108,108,111"
-            std::string tokens_str = argv[++i];
-            std::stringstream ss(tokens_str);
-            std::string token_str;
-            while (std::getline(ss, token_str, ',')) {
-                try {
-                    long token_id = std::stol(token_str);
-                    cfg.verify_tokens.push_back(token_id);
-                } catch (const std::exception& e) {
-                    std::cerr << "错误: 无效的token ID '" << token_str << "'\n";
-                    std::cerr << "格式: --verify 72,101,108,108,111\n";
+            // 如果提供了token IDs参数，则解析；否则使用默认值
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                // 解析token ID列表，格式: "72,101,108,108,111"
+                std::string tokens_str = argv[++i];
+                std::stringstream ss(tokens_str);
+                std::string token_str;
+                cfg.verify_tokens.clear();  // 清空默认值
+                while (std::getline(ss, token_str, ',')) {
+                    try {
+                        long token_id = std::stol(token_str);
+                        cfg.verify_tokens.push_back(token_id);
+                    } catch (const std::exception& e) {
+                        std::cerr << "错误: 无效的token ID '" << token_str << "'\n";
+                        std::cerr << "格式: --verify 72,101,108,108,111\n";
+                        exit(1);
+                    }
+                }
+                if (cfg.verify_tokens.empty()) {
+                    std::cerr << "错误: --verify 需要至少一个token ID\n";
                     exit(1);
                 }
             }
-            if (cfg.verify_tokens.empty()) {
-                std::cerr << "错误: --verify 需要至少一个token ID\n";
-                exit(1);
-            }
+            // 否则使用默认的verify_tokens
         } else if (strcmp(argv[i], "--verbose") == 0) {
             cfg.verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -181,14 +189,14 @@ Tensor forward_with_method(
         if (kv_cache) {
             return qwen3::qwen3_forward_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
         } else {
             return qwen3::qwen3_forward(
                 input_ids, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
@@ -197,14 +205,14 @@ Tensor forward_with_method(
         if (kv_cache) {
             return avx2::qwen3_forward_avx_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
         } else {
             return avx2::qwen3_forward_avx(
                 input_ids, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
@@ -213,14 +221,14 @@ Tensor forward_with_method(
         if (kv_cache) {
             return mpi::qwen3_forward_mpi_omp_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
         } else {
             return mpi::qwen3_forward_mpi_omp(
                 input_ids, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
@@ -229,14 +237,14 @@ Tensor forward_with_method(
         if (kv_cache) {
             return mpi_avx::qwen3_forward_mpi_avx_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
         } else {
             return mpi_avx::qwen3_forward_mpi_avx(
                 input_ids, weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
+                weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
                 weights.head_dim, 1e-6f
             );
@@ -595,7 +603,8 @@ void demo_decode_generation(
     const std::vector<long>& prompt_ids,
     const Qwen3Weights& weights,
     const std::string& method,
-    int gen_len
+    int gen_len,
+    bool use_kv_cache
 ) {
     using namespace tensor_cpp::ops;
 
@@ -607,49 +616,87 @@ void demo_decode_generation(
     }
     if (prompt_ids.size() > 10) std::cout << "...";
     std::cout << "] (" << prompt_ids.size() << " tokens)\n";
+    std::cout << "  KV Cache: " << (use_kv_cache ? "Enabled" : "Disabled") << "\n";
 
-    // 创建KV cache
-    auto kv_cache = std::make_unique<KVCache>(
-        weights.num_layers, 1, weights.num_key_value_heads,
-        weights.head_dim, 4096
-    );
+    // 创建KV cache（如果需要）
+    std::unique_ptr<KVCache> kv_cache;
+    if (use_kv_cache) {
+        kv_cache = std::make_unique<KVCache>(
+            weights.num_layers, 1, weights.num_key_value_heads,
+            weights.head_dim, 4096
+        );
+    }
 
     // 生成tokens
     std::vector<long> generated = prompt_ids;
     std::cout << "  Generating " << gen_len << " tokens...\n";
 
     for (int step = 0; step < gen_len; ++step) {
+        std::cout << "    Step " << (step + 1) << "/" << gen_len << ": Forward pass...";
+        std::cout.flush();
+
         // 准备输入
-        Shape input_shape({1, static_cast<long>(generated.size())});
-        TensorL input(generated, input_shape);
+        // 使用KV cache时，decode阶段只传入最后1个新token
+        TensorL input;
+        if (use_kv_cache && step > 0) {
+            // Decode阶段：只传入最新token
+            std::vector<long> new_token = {generated.back()};
+            input = TensorL(new_token, Shape({1, 1}));
+        } else {
+            // Prefill阶段或不使用cache：传入所有tokens
+            Shape input_shape({1, static_cast<long>(generated.size())});
+            input = TensorL(generated, input_shape);
+        }
 
         // Forward pass
+        auto start = std::chrono::high_resolution_clock::now();
         Tensor output;
         if (method == "baseline") {
-            output = qwen3::qwen3_forward_with_cache(
-                input, kv_cache.get(), weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
-                weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
-            );
+            if (use_kv_cache) {
+                output = qwen3::qwen3_forward_with_cache(
+                    input, kv_cache.get(), weights.embed_tokens, weights.layers,
+                    weights.norm_weight, weights.lm_head, weights.num_layers,
+                    weights.num_attention_heads, weights.num_key_value_heads,
+                    weights.head_dim, 1e-6f
+                );
+            } else {
+                output = qwen3::qwen3_forward(
+                    input, weights.embed_tokens, weights.layers,
+                    weights.norm_weight, weights.lm_head, weights.num_layers,
+                    weights.num_attention_heads, weights.num_key_value_heads,
+                    weights.head_dim, 1e-6f
+                );
+            }
         } else if (method == "avx2") {
-            output = avx2::qwen3_forward_avx_with_cache(
-                input, kv_cache.get(), weights.embed_tokens, weights.layers,
-                weights.norm_weight, weights.num_layers,
-                weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
-            );
+            if (use_kv_cache) {
+                output = avx2::qwen3_forward_avx_with_cache(
+                    input, kv_cache.get(), weights.embed_tokens, weights.layers,
+                    weights.norm_weight, weights.lm_head, weights.num_layers,
+                    weights.num_attention_heads, weights.num_key_value_heads,
+                    weights.head_dim, 1e-6f
+                );
+            } else {
+                output = avx2::qwen3_forward_avx(
+                    input, weights.embed_tokens, weights.layers,
+                    weights.norm_weight, weights.lm_head, weights.num_layers,
+                    weights.num_attention_heads, weights.num_key_value_heads,
+                    weights.head_dim, 1e-6f
+                );
+            }
         } else {
             std::cout << "  Unknown method: " << method << "\n";
             return;
         }
 
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        std::cout << " Done (" << duration.count() << " ms)\n";
+
         // Sample next token (argmax)
         // output shape: [1, seq_len, vocab_size]
-        // Get last position's logits
+        // Get last position's logits (总是最后一个位置)
         size_t vocab_size = weights.vocab_size;
-        size_t last_pos = generated.size() - 1;
-        const float* logits = output.data() + last_pos * vocab_size;
+        const float* logits = output.data() + (output.shape()[1] - 1) * vocab_size;
 
         // Find argmax
         float max_logit = logits[0];
@@ -662,13 +709,7 @@ void demo_decode_generation(
         }
 
         generated.push_back(max_idx);
-
-        // 每10个token输出一次进度
-        if ((step + 1) % 10 == 0 || step == gen_len - 1) {
-            std::cout << "    Step " << (step + 1) << "/" << gen_len
-                      << ": Generated token " << max_idx
-                      << " (logit=" << max_logit << ")\n";
-        }
+        std::cout << "    Generated token " << max_idx << " (logit=" << max_logit << ")\n\n";
     }
 
     std::cout << "  Generated tokens: [";
@@ -839,18 +880,17 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "     Decode Generation Demo\n";
     std::cout << "============================================================\n";
     std::cout << "Running decode generation to show actual model output...\n";
-    std::cout << "Using first " << std::min(input_ids.size(), size_t(10)) << " tokens from input...\n\n";
 
-    // 使用prompt的前几个token进行演示（避免太长）
+    // 使用完整的prompt进行演示
+    // 注意：由于LM head投影未优化，如果prompt很长会很慢
     std::vector<long> demo_prompt_ids = input_ids;
-    if (demo_prompt_ids.size() > 10) {
-        demo_prompt_ids.resize(10);  // 只用前10个token
-    }
+    std::cout << "Using " << demo_prompt_ids.size() << " tokens from input, generating " << cfg.gen_len << " tokens...\n\n";
 
-    // 演示baseline和AVX2的生成（只生成10个token，避免太慢）
-    demo_decode_generation(demo_prompt_ids, weights, "baseline", 10);
+    // 演示baseline和AVX2的生成
+    // 这里生成cfg.gen_len个token来验证功能
+    demo_decode_generation(demo_prompt_ids, weights, "baseline", cfg.gen_len, cfg.use_kv_cache);
     std::cout << "\n";
-    demo_decode_generation(demo_prompt_ids, weights, "avx2", 10);
+    demo_decode_generation(demo_prompt_ids, weights, "avx2", cfg.gen_len, cfg.use_kv_cache);
 
     std::cout << "\n============================================================\n";
     std::cout << "Note: This demo uses greedy decoding (argmax).\n";

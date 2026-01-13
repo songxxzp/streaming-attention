@@ -133,6 +133,12 @@ target_link_libraries(debug_qkv_projection PRIVATE tensor_cpp)
 add_executable(debug_qk_norm tests/debug_qk_norm.cpp)
 target_link_libraries(debug_qk_norm PRIVATE tensor_cpp)
 
+add_executable(debug_compare_logits tests/debug_compare_logits.cpp)
+target_link_libraries(debug_compare_logits PRIVATE tensor_cpp)
+
+add_executable(simple_lm_head_test tests/simple_lm_head_test.cpp)
+target_link_libraries(simple_lm_head_test PRIVATE tensor_cpp)
+
 # Validation/Profiling Tests
 add_executable(torch_validation tests/validation/torch_validation.cpp)
 target_link_libraries(torch_validation PRIVATE tensor_cpp)
@@ -167,3 +173,9 @@ message(STATUS "MPI Compiler: ${MPI_CXX_COMPILER}")
 message(STATUS "MPI Version: ${MPI_CXX_VERSION}")
 message(STATUS "========================================")
 message(STATUS "")
+# 临时添加到CMakeLists.txt
+add_executable(test_kv_cache_simple tests/test_kv_cache_simple.cpp)
+target_link_libraries(test_kv_cache_simple PRIVATE tensor_cpp)
+
+add_executable(debug_avx2_cache tests/debug_avx2_cache.cpp)
+target_link_libraries(debug_avx2_cache PRIVATE tensor_cpp)

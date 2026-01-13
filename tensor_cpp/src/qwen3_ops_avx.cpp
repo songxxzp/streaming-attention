@@ -385,6 +385,7 @@ Tensor qwen3_forward_avx(
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -427,9 +428,28 @@ Tensor qwen3_forward_avx(
     }
 
     // Final layernorm
-    hidden_states = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
+    Tensor hidden_normed = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
 
-    return hidden_states;
+    // LM head projection to get logits
+    size_t batch_size = input_ids.shape()[0];
+    size_t hidden_size = hidden_states.shape()[2];
+    size_t vocab_size = lm_head.shape()[0];
+    size_t num_samples = batch_size * seq_len;
+
+    std::vector<float> logits_data(num_samples * vocab_size);
+
+    #pragma omp parallel for if(num_samples * vocab_size > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
+        for (size_t v = 0; v < vocab_size; ++v) {
+            float sum = 0.0f;
+            for (size_t h = 0; h < hidden_size; ++h) {
+                sum += hidden_normed.data()[s * hidden_size + h] * lm_head.data()[v * hidden_size + h];
+            }
+            logits_data[s * vocab_size + v] = sum;
+        }
+    }
+
+    return Tensor(std::move(logits_data), Shape({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(vocab_size)}));
 }
 
 // Export MLP function - wrapper for internal implementation
@@ -670,22 +690,19 @@ Tensor qwen3_decoder_layer_avx_with_cache(
     float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
     // Create causal mask
-    size_t total_seq_len = k_final.shape()[2];
+    size_t k_seq_len = k_final.shape()[2];
     size_t q_seq_len = q_rope.shape()[2];
 
     Tensor mask;
-    if (q_seq_len == 1 && total_seq_len > 1) {
-        // Decode phase: single query token at the end
-        std::vector<float> mask_data(total_seq_len);
-        for (size_t j = 0; j < total_seq_len; ++j) {
-            mask_data[j] = (j <= total_seq_len - 1) ? 0.0f : -std::numeric_limits<float>::infinity();
-        }
-        mask = Tensor(std::move(mask_data), Shape({1, static_cast<long>(total_seq_len)}));
-        mask = mask.view({1, 1, 1, static_cast<long>(total_seq_len)});
+    if (q_seq_len == 1 && k_seq_len > 1) {
+        // Decode phase: single query token can attend to all key positions
+        // Create mask: [1, 1, 1, k_seq_len]
+        std::vector<float> mask_data(k_seq_len, 0.0f);  // All positions visible
+        mask = Tensor(std::move(mask_data), Shape({1, 1, 1, static_cast<long>(k_seq_len)}));
     } else {
-        // Prefill phase: standard causal mask
-        Tensor causal_mask = create_causal_mask(total_seq_len);
-        mask = causal_mask.view({1, 1, static_cast<long>(total_seq_len), static_cast<long>(total_seq_len)});
+        // Prefill phase: standard causal mask [q_seq_len, k_seq_len]
+        Tensor causal_mask = create_causal_mask(k_seq_len);
+        mask = causal_mask.view({1, 1, static_cast<long>(q_seq_len), static_cast<long>(k_seq_len)});
     }
 
     // Use AVX2-optimized attention
@@ -728,6 +745,7 @@ Tensor qwen3_forward_avx_with_cache(
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -737,9 +755,13 @@ Tensor qwen3_forward_avx_with_cache(
     // Embed tokens
     Tensor hidden_states = embedding(input_ids, token_embedding);
 
-    // Compute RoPE frequencies
+    // Compute RoPE frequencies for the TOTAL sequence length (cached + new)
     size_t seq_len = input_ids.shape()[1];
-    auto rope_freqs = compute_rope_freqs(seq_len, head_dim, 1000000.0f);
+    size_t total_seq_len = seq_len;
+    if (kv_cache != nullptr && kv_cache->current_seq_len > 0) {
+        total_seq_len = kv_cache->current_seq_len + seq_len;
+    }
+    auto rope_freqs = compute_rope_freqs(total_seq_len, head_dim, 1000000.0f);
     Tensor cos = rope_freqs.first;
     Tensor sin = rope_freqs.second;
 
@@ -777,9 +799,27 @@ Tensor qwen3_forward_avx_with_cache(
     }
 
     // Final layernorm
-    hidden_states = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
+    size_t batch_size = input_ids.shape()[0];
+    size_t hidden_size = hidden_states.shape()[2];
+    Tensor hidden_normed = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
 
-    return hidden_states;
+    // LM head projection to get logits
+    size_t vocab_size = lm_head.shape()[0];
+    size_t num_samples = batch_size * seq_len;
+    std::vector<float> logits_data(num_samples * vocab_size);
+
+    #pragma omp parallel for if(num_samples * vocab_size > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
+        for (size_t v = 0; v < vocab_size; ++v) {
+            float sum = 0.0f;
+            for (size_t h = 0; h < hidden_size; ++h) {
+                sum += hidden_normed.data()[s * hidden_size + h] * lm_head.data()[v * hidden_size + h];
+            }
+            logits_data[s * vocab_size + v] = sum;
+        }
+    }
+
+    return Tensor(std::move(logits_data), Shape({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(vocab_size)}));
 }
 
 } // namespace avx2

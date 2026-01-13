@@ -283,6 +283,7 @@ Tensor qwen3_forward_mpi_avx(
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -325,9 +326,28 @@ Tensor qwen3_forward_mpi_avx(
     }
 
     // Final layernorm
-    hidden_states = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
+    Tensor hidden_normed = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
 
-    return hidden_states;
+    // LM head projection to get logits
+    size_t batch_size = input_ids.shape()[0];
+    size_t hidden_size = hidden_states.shape()[2];
+    size_t vocab_size = lm_head.shape()[0];
+    size_t num_samples = batch_size * seq_len;
+
+    std::vector<float> logits_data(num_samples * vocab_size);
+
+    #pragma omp parallel for if(num_samples * vocab_size > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
+        for (size_t v = 0; v < vocab_size; ++v) {
+            float sum = 0.0f;
+            for (size_t h = 0; h < hidden_size; ++h) {
+                sum += hidden_normed.data()[s * hidden_size + h] * lm_head.data()[v * hidden_size + h];
+            }
+            logits_data[s * vocab_size + v] = sum;
+        }
+    }
+
+    return Tensor(std::move(logits_data), Shape({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(vocab_size)}));
 }
 
 // ============================================================================
@@ -423,6 +443,7 @@ Tensor qwen3_forward_mpi_avx_with_cache(
     const Tensor& token_embedding,
     const std::vector<Qwen3LayerWeights>& layers,
     const Tensor& norm_weight,
+    const Tensor& lm_head,
     size_t num_layers,
     size_t num_attention_heads,
     size_t num_key_value_heads,
@@ -444,6 +465,7 @@ Tensor qwen3_forward_mpi_avx_with_cache(
         token_embedding,
         layers,
         norm_weight,
+        lm_head,
         num_layers,
         num_attention_heads,
         num_key_value_heads,

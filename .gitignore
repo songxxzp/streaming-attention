@@ -79,6 +79,12 @@ __pycache__/
 # Trash directory
 trash/
 
+# Debug directory
+py/
+
+# Tensor CPP debug files
+tensor_cpp/debug/
+
 # OS
 .DS_Store
 Thumbs.db

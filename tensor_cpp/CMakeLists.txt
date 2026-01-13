@@ -117,28 +117,6 @@ target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX O
 add_executable(benchmark_avx2_versions tests/benchmark/benchmark_avx2_versions.cpp)
 target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
 
-# Debug Tests
-add_executable(debug_avx2_layers tests/debug_avx2_layers.cpp)
-target_link_libraries(debug_avx2_layers PRIVATE tensor_cpp)
-
-add_executable(debug_linear_avx tests/debug_linear_avx.cpp)
-target_link_libraries(debug_linear_avx PRIVATE tensor_cpp)
-
-add_executable(debug_qkv_weights tests/debug_qkv_weights.cpp)
-target_link_libraries(debug_qkv_weights PRIVATE tensor_cpp)
-
-add_executable(debug_qkv_projection tests/debug_qkv_projection.cpp)
-target_link_libraries(debug_qkv_projection PRIVATE tensor_cpp)
-
-add_executable(debug_qk_norm tests/debug_qk_norm.cpp)
-target_link_libraries(debug_qk_norm PRIVATE tensor_cpp)
-
-add_executable(debug_compare_logits tests/debug_compare_logits.cpp)
-target_link_libraries(debug_compare_logits PRIVATE tensor_cpp)
-
-add_executable(simple_lm_head_test tests/simple_lm_head_test.cpp)
-target_link_libraries(simple_lm_head_test PRIVATE tensor_cpp)
-
 # Validation/Profiling Tests
 add_executable(torch_validation tests/validation/torch_validation.cpp)
 target_link_libraries(torch_validation PRIVATE tensor_cpp)
@@ -176,6 +154,3 @@ message(STATUS "")
 # 临时添加到CMakeLists.txt
 add_executable(test_kv_cache_simple tests/test_kv_cache_simple.cpp)
 target_link_libraries(test_kv_cache_simple PRIVATE tensor_cpp)
-
-add_executable(debug_avx2_cache tests/debug_avx2_cache.cpp)
-target_link_libraries(debug_avx2_cache PRIVATE tensor_cpp)

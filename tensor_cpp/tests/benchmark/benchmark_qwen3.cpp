@@ -58,7 +58,7 @@ struct BenchmarkConfig {
     bool use_kv_cache = true;              // decode阶段是否使用KV cache
     bool compare_kv_cache = false;         // 对比所有方法的KV cache加速效果
     bool verify_mode = false;              // 验证模式
-    std::string verify_prompt = "";        // 验证模式下的输入文本
+    std::vector<long> verify_tokens;       // 验证模式下的输入token IDs
 };
 
 void print_usage(const char* prog) {
@@ -77,7 +77,7 @@ void print_usage(const char* prog) {
               << "  --use-kv-cache        decode阶段使用KV cache\n"
               << "  --no-kv-cache         decode阶段不使用KV cache\n"
               << "  --compare-kv-cache    对比所有方法的KV cache加速效果\n"
-              << "  --verify TEXT         验证模式：检查输出正确性\n"
+              << "  --verify TOKENS       验证模式：检查输出正确性 (如: --verify 72,101,108,108,111)\n"
               << "  --verbose             输出详细信息\n"
               << "  --help                显示帮助信息\n";
 }
@@ -114,7 +114,24 @@ BenchmarkConfig parse_args(int argc, char** argv) {
             cfg.compare_kv_cache = true;
         } else if (strcmp(argv[i], "--verify") == 0 && i + 1 < argc) {
             cfg.verify_mode = true;
-            cfg.verify_prompt = argv[++i];
+            // 解析token ID列表，格式: "72,101,108,108,111"
+            std::string tokens_str = argv[++i];
+            std::stringstream ss(tokens_str);
+            std::string token_str;
+            while (std::getline(ss, token_str, ',')) {
+                try {
+                    long token_id = std::stol(token_str);
+                    cfg.verify_tokens.push_back(token_id);
+                } catch (const std::exception& e) {
+                    std::cerr << "错误: 无效的token ID '" << token_str << "'\n";
+                    std::cerr << "格式: --verify 72,101,108,108,111\n";
+                    exit(1);
+                }
+            }
+            if (cfg.verify_tokens.empty()) {
+                std::cerr << "错误: --verify 需要至少一个token ID\n";
+                exit(1);
+            }
         } else if (strcmp(argv[i], "--verbose") == 0) {
             cfg.verbose = true;
         } else if (strcmp(argv[i], "--help") == 0) {
@@ -671,14 +688,16 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "============================================================\n";
     std::cout << "     Verification Mode: Comparing Outputs\n";
     std::cout << "============================================================\n";
-    std::cout << "Input prompt: \"" << cfg.verify_prompt << "\"\n";
+    std::cout << "Input tokens: [";
+    for (size_t i = 0; i < cfg.verify_tokens.size(); ++i) {
+        std::cout << cfg.verify_tokens[i];
+        if (i < cfg.verify_tokens.size() - 1) std::cout << ", ";
+    }
+    std::cout << "] (" << cfg.verify_tokens.size() << " tokens)\n";
     std::cout << "============================================================\n\n";
 
-    // 将prompt转换为token IDs（简单方法：使用字符ASCII值）
-    std::vector<long> input_ids;
-    for (char c : cfg.verify_prompt) {
-        input_ids.push_back(static_cast<long>(c));
-    }
+    // 直接使用传入的token IDs
+    std::vector<long> input_ids = cfg.verify_tokens;
     Shape input_shape({1, static_cast<long>(input_ids.size())});
     TensorL input(input_ids, input_shape);
 
@@ -820,7 +839,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "     Decode Generation Demo\n";
     std::cout << "============================================================\n";
     std::cout << "Running decode generation to show actual model output...\n";
-    std::cout << "Using prompt tokens from input text...\n\n";
+    std::cout << "Using first " << std::min(input_ids.size(), size_t(10)) << " tokens from input...\n\n";
 
     // 使用prompt的前几个token进行演示（避免太长）
     std::vector<long> demo_prompt_ids = input_ids;
@@ -834,8 +853,8 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     demo_decode_generation(demo_prompt_ids, weights, "avx2", 10);
 
     std::cout << "\n============================================================\n";
-    std::cout << "Note: This demo uses greedy decoding (argmax) and ASCII token IDs.\n";
-    std::cout << "      For proper text generation, use a tokenizer.\n";
+    std::cout << "Note: This demo uses greedy decoding (argmax).\n";
+    std::cout << "      Token IDs should come from a proper tokenizer.\n";
     std::cout << "============================================================\n\n";
 
     // 最终结果

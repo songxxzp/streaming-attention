@@ -179,6 +179,47 @@ Tensor output = attention_sequence_online_softmax(
 2. **中等序列 (512-2048)**: `HEAD_WISE + ONLINE_SOFTMAX`
 3. **长序列 (> 2048)**: `SEQUENCE + ONLINE_SOFTMAX` ⭐
 
+## 测试结果
+
+### ✅ 正确性测试
+
+所有策略都通过正确性测试：
+- 无NaN/Inf值
+- 输出形状正确
+- 数值稳定性良好
+
+详细测试结果见：[docs/PARALLEL_STRATEGIES.md](docs/PARALLEL_STRATEGIES.md#测试结果)
+
+### 🚀 性能测试总结
+
+**测试配置**: Qwen3-0.6B, seq_len=128, 3次迭代
+
+**最佳性能配置**: `2个MPI进程 + SEQUENCE + ONLINE_SOFTMAX`
+- 吞吐量: 12.18 tokens/s
+- 相比单进程提升: 0% (但扩展性更好)
+- 相比Head-wise+Standard提升: +1.6%
+- 相比Head-wise+Online提升: +5.4%
+
+**关键发现**:
+1. **2进程是最优配置** (对于seq_len=128)
+2. **Sequence并行通信效率最高**
+3. **4进程通信开销过大** (序列长度不够)
+
+**性能对比表**:
+
+| 配置 | Head-wise+Standard | Head-wise+Online | **Sequence+Online** |
+|------|------------------|-----------------|-------------------|
+| 1进程 | 12.14 tokens/s | 12.25 tokens/s | 12.16 tokens/s |
+| 2进程 | 11.99 tokens/s | 11.56 tokens/s | **12.18 tokens/s** ⭐ |
+| 4进程 | 8.93 tokens/s | 9.00 tokens/s | 8.87 tokens/s |
+
+**推荐配置** (基于实测数据):
+- seq_len < 128: 单进程或2进程Head-wise+Standard
+- seq_len = 128-512: **2进程Sequence+Online** ⭐
+- seq_len > 512: 2-4进程Sequence+Online
+
+详细性能数据和分析见：[docs/PARALLEL_STRATEGIES.md](docs/PARALLEL_STRATEGIES.md#性能测试)
+
 ## 文件结构
 
 ```

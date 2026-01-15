@@ -20,6 +20,14 @@
 #include <omp.h>
 #endif
 
+// AVX2 intrinsics detection
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __AVX2__
+    #include <immintrin.h>
+    #define HAS_AVX2_OPS
+    #endif
+#endif
+
 // ============================================================================
 // Integer Tensor for indices (argmax, embedding, etc.)
 // ============================================================================
@@ -267,6 +275,31 @@ Tensor self_attention_streaming_blockwise(
     int q_block_size = 32,
     int kv_block_size = 64
 );
+
+#ifdef HAS_AVX2_OPS
+/**
+ * AVX2-optimized Block-wise Streaming Attention
+ *
+ * Same as self_attention_streaming_blockwise but optimized with AVX2 SIMD
+ * instructions for faster dot product computation and vector operations.
+ *
+ * @param query   (batch, num_heads, q_seq_len, head_dim)
+ * @param key     (batch, num_heads, kv_seq_len, head_dim)
+ * @param value   (batch, num_heads, kv_seq_len, head_dim)
+ * @param scale   Scaling factor (typically 1/sqrt(head_dim))
+ * @param q_block_size Size of query blocks
+ * @param kv_block_size Size of key/value blocks
+ * @return        (batch, num_heads, q_seq_len, head_dim)
+ */
+Tensor self_attention_streaming_blockwise_avx2(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale = 1.0f,
+    int q_block_size = 32,
+    int kv_block_size = 64
+);
+#endif
 
 // ============================================================================
 // MPI Functions

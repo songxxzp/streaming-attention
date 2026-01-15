@@ -714,9 +714,9 @@ Tensor qwen3_decoder_layer_avx_with_cache(
             // Note: streaming attention doesn't need mask (handles causal via online softmax)
             attn_output = self_attention_streaming(q_rope, k_repeated, v_repeated, scale);
         } else {
-            // Prefill phase: use block-wise streaming attention
-            // Handles causal constraint internally
-            attn_output = self_attention_streaming_blockwise(
+            // Prefill phase: use AVX2-optimized block-wise streaming attention
+            // Handles causal constraint internally with AVX2 SIMD optimizations
+            attn_output = self_attention_streaming_blockwise_avx2(
                 q_rope, k_repeated, v_repeated, scale, 32, 64
             );
         }

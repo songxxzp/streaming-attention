@@ -45,6 +45,7 @@ target_link_libraries(tensor_cpp PUBLIC
 )
 
 # Add AVX2 compile flags for AVX source files
+set_source_files_properties(src/ops.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/qwen3_ops_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")
 set_source_files_properties(src/qwen3_ops_mpi_avx.cpp PROPERTIES COMPILE_FLAGS "-mavx2 -mfma")

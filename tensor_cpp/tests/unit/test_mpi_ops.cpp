@@ -311,6 +311,55 @@ void test_self_attention_mpi_omp(MPI_Comm comm) {
     }
 }
 
+// Test 6b: Self-Attention Streaming
+void test_self_attention_mpi_streaming_omp(MPI_Comm comm) {
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    if (rank == 0) {
+        std::cout << "\n========================================\n";
+        std::cout << "Test 6b: Self-Attention STREAMING (MPI+OpenMP)\n";
+        std::cout << "========================================\n";
+    }
+
+    // Create test tensors
+    size_t batch = 2, num_heads = 16, seq_len = 32, head_dim = 128;
+    size_t num_kv_heads = 8;
+
+    std::vector<float> q_data(batch * num_heads * seq_len * head_dim);
+    std::vector<float> k_data(batch * num_kv_heads * seq_len * head_dim);
+    std::vector<float> v_data(batch * num_kv_heads * seq_len * head_dim);
+
+    for (size_t i = 0; i < q_data.size(); ++i) q_data[i] = static_cast<float>(i) / 1000.0f;
+    for (size_t i = 0; i < k_data.size(); ++i) k_data[i] = static_cast<float>(i) / 2000.0f;
+    for (size_t i = 0; i < v_data.size(); ++i) v_data[i] = static_cast<float>(i) / 3000.0f;
+
+    Tensor query(std::move(q_data), Shape({static_cast<long>(batch), static_cast<long>(num_heads),
+                                           static_cast<long>(seq_len), static_cast<long>(head_dim)}));
+    Tensor key(std::move(k_data), Shape({static_cast<long>(batch), static_cast<long>(num_kv_heads),
+                                          static_cast<long>(seq_len), static_cast<long>(head_dim)}));
+    Tensor value(std::move(v_data), Shape({static_cast<long>(batch), static_cast<long>(num_kv_heads),
+                                            static_cast<long>(seq_len), static_cast<long>(head_dim)}));
+
+    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+
+    // Compute with MPI streaming
+    Tensor result = mpi::self_attention_mpi_streaming_omp(query, key, value, nullptr, scale,
+                                                           num_heads, num_kv_heads, comm);
+
+    // Check shape
+    bool shape_ok = result.shape() == query.shape();
+
+    if (rank == 0) {
+        std::cout << "  Query shape: [2, 16, 32, 128]\n";
+        std::cout << "  Key/Value shape: [2, 8, 32, 128]\n";
+        std::cout << "  MPI processes: " << size << "\n";
+        std::cout << "  Output shape correct: " << (shape_ok ? "YES" : "NO") << "\n";
+        std::cout << "  Status: " << (shape_ok ? "PASSED" : "FAILED") << "\n";
+    }
+}
+
 // Test 7: Linear Layer
 void test_linear_mpi_omp(MPI_Comm comm) {
     int rank, size;
@@ -383,6 +432,7 @@ int main(int argc, char** argv) {
     test_rope_mpi_omp(MPI_COMM_WORLD);
     test_swiglu_mpi_omp(MPI_COMM_WORLD);
     test_self_attention_mpi_omp(MPI_COMM_WORLD);
+    test_self_attention_mpi_streaming_omp(MPI_COMM_WORLD);
     test_linear_mpi_omp(MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);

@@ -9,6 +9,7 @@
 #include <limits>
 #include <complex>
 #include <cmath>
+#include <cstring>
 
 namespace tensor_cpp {
 namespace ops {
@@ -409,6 +410,157 @@ Tensor self_attention_mpi_omp(
     }
 
     // Gather results from all ranks
+    std::vector<float> result;
+    if (size > 1) {
+        result.resize(num_attention_heads * batch_size * q_seq_len * head_dim);
+
+        std::vector<int> recvcounts(size);
+        std::vector<int> displs(size);
+
+        for (int i = 0; i < size; ++i) {
+            int s_h = i * heads_per_rank;
+            int e_h = std::min(s_h + heads_per_rank, num_attention_heads);
+            recvcounts[i] = (e_h - s_h) * batch_size * q_seq_len * head_dim;
+            displs[i] = s_h * batch_size * q_seq_len * head_dim;
+        }
+
+        MPI_Allgatherv(
+            attn_output.data(), attn_output.size(), MPI_FLOAT,
+            result.data(), recvcounts.data(), displs.data(), MPI_FLOAT, comm
+        );
+    } else {
+        result = std::move(attn_output);
+    }
+
+    Shape result_shape({static_cast<long>(batch_size), static_cast<long>(num_attention_heads),
+                       static_cast<long>(q_seq_len), static_cast<long>(head_dim)});
+    return Tensor(std::move(result), result_shape);
+}
+
+// ============================================================================
+// MPI+OpenMP Streaming Attention
+// ============================================================================
+
+Tensor self_attention_mpi_streaming_omp(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    const Tensor* mask,
+    float scale,
+    int num_attention_heads,
+    int num_key_value_heads,
+    MPI_Comm comm
+) {
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Distribute attention heads across MPI ranks (same as standard version)
+    int heads_per_rank = (num_attention_heads + size - 1) / size;
+    int start_head = rank * heads_per_rank;
+    int end_head = std::min(start_head + heads_per_rank, num_attention_heads);
+    int local_num_heads = end_head - start_head;
+
+    // Tensor shapes
+    size_t batch_size = query.shape()[0];
+    size_t q_seq_len = query.shape()[2];
+    size_t k_seq_len = key.shape()[2];
+    size_t head_dim = query.shape()[3];
+
+    // Compute GQA repetition factor
+    int n_rep = num_attention_heads / num_key_value_heads;
+
+    // Extract local query heads
+    std::vector<float> q_local_data;
+    if (local_num_heads > 0) {
+        q_local_data.resize(local_num_heads * batch_size * q_seq_len * head_dim);
+
+        for (int h_local = 0; h_local < local_num_heads; ++h_local) {
+            int h_global = start_head + h_local;
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t i = 0; i < q_seq_len; ++i) {
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        size_t src_idx = ((b * num_attention_heads + h_global) * q_seq_len + i) * head_dim + d;
+                        size_t dst_idx = ((b * local_num_heads + h_local) * q_seq_len + i) * head_dim + d;
+                        q_local_data[dst_idx] = query[src_idx];
+                    }
+                }
+            }
+        }
+    }
+
+    // Repeat KV heads for GQA (only for local heads)
+    Tensor k_repeated, v_repeated;
+
+    if (local_num_heads > 0) {
+        // Extract local KV heads
+        int kv_start = start_head / n_rep;
+        int kv_end = (end_head + n_rep - 1) / n_rep;
+        int local_kv_heads = kv_end - kv_start;
+
+        // Extract and repeat KV heads
+        std::vector<float> k_local_data(local_kv_heads * batch_size * k_seq_len * head_dim);
+        std::vector<float> v_local_data(local_kv_heads * batch_size * k_seq_len * head_dim);
+
+        for (int h = 0; h < local_kv_heads; ++h) {
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t s = 0; s < k_seq_len; ++s) {
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        size_t src_idx = ((b * num_key_value_heads + (kv_start + h)) * k_seq_len + s) * head_dim + d;
+                        size_t dst_idx = ((b * local_kv_heads + h) * k_seq_len + s) * head_dim + d;
+                        k_local_data[dst_idx] = key[src_idx];
+                        v_local_data[dst_idx] = value[src_idx];
+                    }
+                }
+            }
+        }
+
+        // Repeat for local attention heads
+        std::vector<float> k_repeated_data(local_num_heads * batch_size * k_seq_len * head_dim);
+        std::vector<float> v_repeated_data(local_num_heads * batch_size * k_seq_len * head_dim);
+
+        for (int h_local = 0; h_local < local_num_heads; ++h_local) {
+            int h_global = start_head + h_local;
+            int h_kv = h_global / n_rep - kv_start;
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t s = 0; s < k_seq_len; ++s) {
+                    for (size_t d = 0; d < head_dim; ++d) {
+                        size_t src_idx = ((b * local_kv_heads + h_kv) * k_seq_len + s) * head_dim + d;
+                        size_t dst_idx = ((b * local_num_heads + h_local) * k_seq_len + s) * head_dim + d;
+                        k_repeated_data[dst_idx] = k_local_data[src_idx];
+                        v_repeated_data[dst_idx] = v_local_data[src_idx];
+                    }
+                }
+            }
+        }
+
+        Shape local_shape({static_cast<long>(batch_size), static_cast<long>(local_num_heads),
+                          static_cast<long>(k_seq_len), static_cast<long>(head_dim)});
+        k_repeated = Tensor(std::move(k_repeated_data), local_shape);
+        v_repeated = Tensor(std::move(v_repeated_data), local_shape);
+    }
+
+    // Compute streaming attention for local heads
+    std::vector<float> attn_output;
+    if (local_num_heads > 0) {
+        // Create local query tensor
+        Shape q_local_shape({static_cast<long>(batch_size), static_cast<long>(local_num_heads),
+                            static_cast<long>(q_seq_len), static_cast<long>(head_dim)});
+        Tensor q_local(std::move(q_local_data), q_local_shape);
+
+        // Call streaming attention for local heads
+        Tensor attn_local = ops::self_attention_streaming_blockwise(
+            q_local, k_repeated, v_repeated, scale, 32, 64
+        );
+
+        // Copy result to output buffer
+        attn_output.resize(local_num_heads * batch_size * q_seq_len * head_dim);
+        std::memcpy(attn_output.data(), attn_local.data(),
+                   attn_output.size() * sizeof(float));
+    }
+
+    // Gather results from all ranks (same as standard version)
     std::vector<float> result;
     if (size > 1) {
         result.resize(num_attention_heads * batch_size * q_seq_len * head_dim);

@@ -178,6 +178,35 @@ Tensor self_attention_mpi_omp(
 );
 
 /**
+ * @brief MPI+OpenMP parallelized streaming self-attention
+ *
+ * Strategy: Distribute attention heads across MPI ranks (same as standard)
+ * - Each rank computes streaming attention for its subset of heads
+ * - Uses block-wise streaming attention to avoid materializing QK^T
+ * - Results are combined using allgather
+ *
+ * @param query Query tensor [batch, num_heads, q_seq_len, head_dim]
+ * @param key Key tensor [batch, num_kv_heads, k_seq_len, head_dim]
+ * @param value Value tensor [batch, num_kv_heads, k_seq_len, head_dim]
+ * @param mask Optional attention mask (not used in streaming)
+ * @param scale Scaling factor
+ * @param num_attention_heads Total number of attention heads
+ * @param num_key_value_heads Total number of KV heads
+ * @param comm MPI communicator
+ * @return Attention output [batch, num_heads, q_seq_len, head_dim]
+ */
+Tensor self_attention_mpi_streaming_omp(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    const Tensor* mask,
+    float scale,
+    int num_attention_heads,
+    int num_key_value_heads,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
+/**
  * @brief MPI+OpenMP parallelized linear layer
  *
  * @param input Input tensor [seq_len, in_features]

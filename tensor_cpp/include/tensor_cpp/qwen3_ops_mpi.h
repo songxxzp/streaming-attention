@@ -25,6 +25,14 @@ namespace mpi {
 #ifdef MPI_VERSION
 
 /**
+ * @brief Attention type for MPI computation
+ */
+enum class MPIAttentionType {
+    STANDARD,   ///< Standard attention (materializes QK^T matrix)
+    STREAMING   ///< Streaming attention (block-wise, memory efficient)
+};
+
+/**
  * @brief Qwen3 MLP layer with MPI+OpenMP parallelization
  *
  * Distributes intermediate layer computation across MPI ranks
@@ -60,6 +68,7 @@ Tensor qwen3_mlp_mpi_omp(
  * @param cos RoPE cosine values
  * @param sin RoPE sine values
  * @param comm MPI communicator
+ * @param attention_type Type of attention (STANDARD or STREAMING)
  * @return Output tensor [batch, seq_len, hidden_size]
  */
 Tensor qwen3_attention_mpi_omp(
@@ -73,7 +82,8 @@ Tensor qwen3_attention_mpi_omp(
     const Tensor& k_norm_weight,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 /**

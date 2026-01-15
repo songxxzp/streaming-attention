@@ -70,7 +70,8 @@ Tensor qwen3_attention_mpi_omp(
     const Tensor& k_norm_weight,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // hidden_states: [batch, seq_len, hidden_size]
     size_t batch_size = hidden_states.shape()[0];
@@ -145,10 +146,21 @@ Tensor qwen3_attention_mpi_omp(
 
     // Compute attention with MPI (distributes heads across ranks)
     float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
-    Tensor attn_output = ops::mpi::self_attention_mpi_omp(
-        q, k, v, nullptr, scale,
-        num_attention_heads, num_key_value_heads, comm
-    );
+    Tensor attn_output;
+
+    if (attention_type == MPIAttentionType::STREAMING) {
+        // Use streaming attention (memory efficient, recommended for prefill)
+        attn_output = ops::mpi::self_attention_mpi_streaming_omp(
+            q, k, v, nullptr, scale,
+            num_attention_heads, num_key_value_heads, comm
+        );
+    } else {
+        // Use standard attention
+        attn_output = ops::mpi::self_attention_mpi_omp(
+            q, k, v, nullptr, scale,
+            num_attention_heads, num_key_value_heads, comm
+        );
+    }
 
     // Reshape output for projection
     attn_output = attn_output.view({static_cast<long>(batch_size * seq_len), static_cast<long>(num_attention_heads * head_dim)});

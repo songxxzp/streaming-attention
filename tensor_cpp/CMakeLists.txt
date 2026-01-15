@@ -115,6 +115,9 @@ target_link_libraries(benchmark_performance PRIVATE tensor_cpp MPI::MPI_CXX Open
 add_executable(benchmark_qwen3_versions tests/benchmark/benchmark_qwen3_versions.cpp)
 target_link_libraries(benchmark_qwen3_versions PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
+add_executable(benchmark_mpi_attention tests/benchmark/benchmark_mpi_attention.cpp)
+target_link_libraries(benchmark_mpi_attention PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
 add_executable(benchmark_avx2_versions tests/benchmark/benchmark_avx2_versions.cpp)
 target_link_libraries(benchmark_avx2_versions PRIVATE tensor_cpp)
 

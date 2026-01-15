@@ -183,15 +183,22 @@ Tensor forward_with_method(
     const TensorL& input_ids,
     KVCache* kv_cache,
     const Qwen3Weights& weights,
-    const std::string& method
+    const std::string& method,
+    const std::string& attention
 ) {
+    // Determine attention type
+    qwen3::AttentionType attention_type = qwen3::AttentionType::STANDARD;
+    if (attention == "streaming") {
+        attention_type = qwen3::AttentionType::STREAMING;
+    }
+
     if (method == "baseline") {
         if (kv_cache) {
             return qwen3::qwen3_forward_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, attention_type
             );
         } else {
             return qwen3::qwen3_forward(
@@ -207,7 +214,7 @@ Tensor forward_with_method(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, attention_type
             );
         } else {
             return avx2::qwen3_forward_avx(
@@ -261,14 +268,14 @@ double benchmark_prefill(const BenchmarkConfig& cfg, const Qwen3Weights& weights
 
     // 预热
     for (int i = 0; i < cfg.warmup; ++i) {
-        Tensor output = forward_with_method(input, nullptr, weights, cfg.method);
+        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.attention);
     }
 
     // 正式测试
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < cfg.iters; ++i) {
-        Tensor output = forward_with_method(input, nullptr, weights, cfg.method);
+        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.attention);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -293,7 +300,7 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
     Shape prompt_shape({1, static_cast<long>(prompt_ids.size())});
     TensorL prompt_input(prompt_ids, prompt_shape);
 
-    Tensor prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method);
+    Tensor prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.attention);
 
     // 获取第一个预测token
     size_t hidden_size = weights.hidden_size;
@@ -328,13 +335,13 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
         Shape new_shape({1, 1});
         TensorL new_input(new_token, new_shape);
 
-        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method);
+        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.attention);
     }
 
     // 重置cache
     kv_cache->reset();
     // 重新prefill
-    prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method);
+    prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.attention);
     // 重新获取next_token
     for (size_t v = 0; v < vocab_size; ++v) {
         float sum = 0.0f;
@@ -360,7 +367,7 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
         Shape new_shape({1, 1});
         TensorL new_input(new_token, new_shape);
 
-        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method);
+        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.attention);
 
         // 获取next token
         for (size_t i = 0; i < hidden_size; ++i) {
@@ -399,7 +406,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
     TensorL prompt_input(prompt_ids, prompt_shape);
 
     // 初始forward pass获取第一个token
-    Tensor prefill_output = forward_with_method(prompt_input, nullptr, weights, cfg.method);
+    Tensor prefill_output = forward_with_method(prompt_input, nullptr, weights, cfg.method, cfg.attention);
 
     // 获取第一个预测token
     size_t hidden_size = weights.hidden_size;
@@ -435,7 +442,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
     for (int i = 0; i < cfg.warmup; ++i) {
         Shape new_shape({1, static_cast<long>(prompt_ids.size())});
         TensorL new_input(prompt_ids, new_shape);
-        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method);
+        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.attention);
 
         // 获取next token
         for (size_t j = 0; j < hidden_size; ++j) {
@@ -472,7 +479,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
         Shape new_shape({1, static_cast<long>(prompt_ids.size())});
         TensorL new_input(prompt_ids, new_shape);
 
-        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method);
+        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.attention);
 
         // 获取next token
         for (size_t j = 0; j < hidden_size; ++j) {
@@ -750,7 +757,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "WITHOUT KV CACHE:\n";
     for (const auto& method : methods) {
         std::cout << "  " << get_method_name(method) << "... ";
-        Tensor output = forward_with_method(input, nullptr, weights, method);
+        Tensor output = forward_with_method(input, nullptr, weights, method, cfg.attention);
         outputs_without_cache.push_back({method, output});
         std::cout << "Done (output size: " << output.size() << ")\n";
     }
@@ -761,7 +768,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
         std::cout << "  " << get_method_name(method) << "... ";
         auto kv_cache = std::make_unique<KVCache>(
             weights.num_layers, 1, weights.num_key_value_heads, weights.head_dim, 4096);
-        Tensor output = forward_with_method(input, kv_cache.get(), weights, method);
+        Tensor output = forward_with_method(input, kv_cache.get(), weights, method, cfg.attention);
         outputs_with_cache.push_back({method, output});
         std::cout << "Done (output size: " << output.size() << ")\n";
     }

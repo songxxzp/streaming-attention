@@ -854,6 +854,65 @@ std::vector<float> streaming_attention_omp(
 }
 
 // ============================================================================
+// Multi-head Streaming Attention (Tensor wrapper)
+// ============================================================================
+
+Tensor self_attention_streaming(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale,
+    int block_size
+) {
+    // query: [batch, num_heads, 1, head_dim]
+    // key:   [batch, num_heads, kv_seq_len, head_dim]
+    // value: [batch, num_heads, kv_seq_len, head_dim]
+    const Shape& q_shape = query.shape();
+    size_t batch = q_shape[0];
+    size_t num_heads = q_shape[1];
+    size_t q_seq_len = q_shape[2];
+    size_t head_dim = q_shape[3];
+
+    const Shape& k_shape = key.shape();
+    size_t kv_seq_len = k_shape[2];
+
+    // Output: [batch, num_heads, q_seq_len, head_dim]
+    size_t output_size = batch * num_heads * q_seq_len * head_dim;
+    std::vector<float> output_data(output_size);
+
+    #pragma omp parallel for if(batch * num_heads > 1)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            // Process each head independently
+            for (size_t i = 0; i < q_seq_len; ++i) {
+                // Get query vector for this position: [head_dim]
+                size_t q_offset = ((b * num_heads + h) * q_seq_len + i) * head_dim;
+                const float* Q = query.data() + q_offset;
+
+                // Get key and value matrices: [kv_seq_len, head_dim]
+                size_t kv_offset = (b * num_heads + h) * kv_seq_len * head_dim;
+                const float* K = key.data() + kv_offset;
+                const float* V = value.data() + kv_offset;
+
+                // Call streaming attention for this head
+                // Note: scale is applied inside streaming_attention_omp
+                std::vector<float> result = streaming_attention_omp(
+                    Q, K, V, kv_seq_len, head_dim, block_size, 0
+                );
+
+                // Copy result to output
+                size_t out_offset = ((b * num_heads + h) * q_seq_len + i) * head_dim;
+                for (size_t d = 0; d < head_dim; ++d) {
+                    output_data[out_offset + d] = result[d] * scale;
+                }
+            }
+        }
+    }
+
+    return Tensor(std::move(output_data), query.shape());
+}
+
+// ============================================================================
 // MPI Functions
 // ============================================================================
 

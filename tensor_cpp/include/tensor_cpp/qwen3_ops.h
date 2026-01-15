@@ -23,6 +23,15 @@ namespace tensor_cpp {
 namespace qwen3 {
 
 // ============================================================================
+// Attention Type
+// ============================================================================
+
+enum class AttentionType {
+    STANDARD,   // Standard attention (softmax-based)
+    STREAMING   // Streaming attention (online softmax, block-based)
+};
+
+// ============================================================================
 // Layer Weights Structure (must be declared first)
 // ============================================================================
 
@@ -288,7 +297,8 @@ Tensor qwen3_decoder_layer_with_cache(
     const Tensor& up_mlp,
     const Tensor& down_mlp,
     const Tensor& cos,
-    const Tensor& sin
+    const Tensor& sin,
+    AttentionType attention_type = AttentionType::STANDARD
 );
 
 /**
@@ -318,7 +328,8 @@ Tensor qwen3_forward_with_cache(
     size_t num_attention_heads,
     size_t num_key_value_heads,
     size_t head_dim,
-    float rms_norm_eps
+    float rms_norm_eps,
+    AttentionType attention_type = AttentionType::STANDARD
 );
 
 } // namespace qwen3

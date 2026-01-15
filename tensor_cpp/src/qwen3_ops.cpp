@@ -635,7 +635,8 @@ Tensor qwen3_decoder_layer_with_cache(
     const Tensor& up_mlp,
     const Tensor& down_mlp,
     const Tensor& cos,
-    const Tensor& sin
+    const Tensor& sin,
+    AttentionType attention_type
 ) {
     // Input layernorm
     Tensor residual = hidden_states;
@@ -888,8 +889,21 @@ Tensor qwen3_decoder_layer_with_cache(
         mask = causal_mask.view({1, 1, static_cast<long>(total_seq_len), static_cast<long>(total_seq_len)});
     }
 
-    // Use self_attention from ops
-    Tensor attn_output = ops::self_attention(q_rope, k_repeated, v_repeated, &mask, scale);
+    // Compute attention based on attention_type
+    Tensor attn_output;
+    if (attention_type == AttentionType::STREAMING && q_seq_len == 1) {
+        // Use streaming attention for decode phase
+        // Note: streaming attention doesn't need mask (handles causal via online softmax)
+        attn_output = ops::self_attention_streaming(q_rope, k_repeated, v_repeated, scale);
+    } else {
+        // Use standard attention
+        // For prefill or when explicitly requested, use standard attention
+        if (attention_type == AttentionType::STREAMING) {
+            // Streaming attention requested, but q_seq_len > 1, fall back to standard
+            // (streaming attention is only efficient for single query position)
+        }
+        attn_output = ops::self_attention(q_rope, k_repeated, v_repeated, &mask, scale);
+    }
 
     // Transpose back: [batch, seq_len, num_heads, head_dim]
     Tensor attn_output_t = attn_output.transpose(1, 2);
@@ -927,7 +941,8 @@ Tensor qwen3_forward_with_cache(
     size_t num_attention_heads,
     size_t num_key_value_heads,
     size_t head_dim,
-    float rms_norm_eps
+    float rms_norm_eps,
+    AttentionType attention_type
 ) {
     size_t batch_size = input_ids.shape()[0];
     size_t seq_len = input_ids.shape()[1];
@@ -962,7 +977,8 @@ Tensor qwen3_forward_with_cache(
             layer.up_proj,
             layer.down_proj,
             cos,
-            sin
+            sin,
+            attention_type
         );
     }
 

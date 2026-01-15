@@ -223,6 +223,27 @@ std::vector<float> streaming_attention_omp(
     int num_threads = 0
 );
 
+/**
+ * Multi-head Streaming Attention (Tensor wrapper)
+ *
+ * Wraps streaming_attention_omp for multi-head attention tensors.
+ * Suitable for decode phase with single query position.
+ *
+ * @param query   (batch, num_heads, 1, head_dim)
+ * @param key     (batch, num_heads, kv_seq_len, head_dim)
+ * @param value   (batch, num_heads, kv_seq_len, head_dim)
+ * @param scale   Scaling factor (typically 1/sqrt(head_dim))
+ * @param block_size Size of each block for streaming computation
+ * @return        (batch, num_heads, 1, head_dim)
+ */
+Tensor self_attention_streaming(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale = 1.0f,
+    int block_size = 64
+);
+
 // ============================================================================
 // MPI Functions
 // ============================================================================

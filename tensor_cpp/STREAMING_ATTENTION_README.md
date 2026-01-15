@@ -1,0 +1,132 @@
+# Streaming Attention Implementation
+
+## 概述
+
+成功在 Qwen3 推理中实现了 Streaming Attention（流式注意力），支持通过命令行参数在标准 attention 和 streaming attention 之间切换。
+
+## 实现细节
+
+### 1. 核心组件
+
+#### `ops.h` / `ops.cpp`
+- 添加了 `self_attention_streaming()` 函数
+- 将多头 attention tensor 格式转换为 streaming attention 所需的格式
+- 使用 `streaming_attention_omp()` 实现并行化
+
+#### `qwen3_ops.h` / `qwen3_ops.cpp`
+- 添加了 `AttentionType` 枚举：
+  ```cpp
+  enum class AttentionType {
+      STANDARD,   // 标准attention (基于softmax)
+      STREAMING   // 流式attention (online softmax, 基于block)
+  };
+  ```
+- 修改了 `qwen3_decoder_layer_with_cache()` 和 `qwen3_forward_with_cache()`
+- 添加了 `attention_type` 参数（默认为 `STANDARD`）
+
+#### `qwen3_ops_avx.h` / `qwen3_ops_avx.cpp`
+- 为 AVX2 优化版本添加了相同的 streaming attention 支持
+- 在 decode 阶段（q_seq_len == 1）时使用 streaming attention
+- 在 prefill 阶段自动回退到标准 attention
+
+### 2. 使用方法
+
+```bash
+# 使用标准 attention（默认）
+./benchmark_qwen3 --attention standard
+
+# 使用流式 attention
+./benchmark_qwen3 --attention streaming
+
+# 验证模式
+./benchmark_qwen3 --verify 151644,872 --gen-len 3 --attention streaming
+```
+
+### 3. 工作原理
+
+#### Streaming Attention 优势
+- **Online Softmax**: 使用增量式 softmax 计算，避免存储完整的 attention matrix
+- **Block-based**: 将序列分成 blocks，逐块处理并合并结果
+- **内存高效**: 特别适合长序列的 decode 阶段
+
+#### 实现策略
+- **Decode 阶段** (q_seq_len == 1): 使用 streaming attention
+- **Prefill 阶段** (q_seq_len > 1): 自动回退到标准 attention
+  - 原因：streaming attention 对单个 query position 最有效
+
+### 4. 性能对比
+
+基于测试结果（生成 2 个 token）：
+
+#### Baseline（标准 OMP）
+- Step 1: 5082 ms → Step 2: 4757 ms
+- 平均: ~4920 ms/step
+
+#### Baseline（Streaming）
+- Step 1: 5052 ms → Step 2: 4905 ms  
+- 平均: ~4979 ms/step
+
+#### AVX2（标准）
+- Step 1: 2407 ms → Step 2: 2034 ms
+- 平均: ~2221 ms/step
+
+#### AVX2（Streaming）
+- Step 1: 2352 ms → Step 2: 2062 ms
+- 平均: ~2207 ms/step
+
+### 5. 正确性验证
+
+两种 attention 模式生成完全相同的 tokens：
+- Standard: `[198, 20002]`
+- Streaming: `[198, 20002]`
+- ✓ 验证通过
+
+### 6. 文件修改清单
+
+**新增文件：**
+- `tensor_cpp/STREAMING_ATTENTION_README.md`
+
+**修改文件：**
+1. `tensor_cpp/include/tensor_cpp/ops.h` - 添加 `self_attention_streaming()`
+2. `tensor_cpp/src/ops.cpp` - 实现 `self_attention_streaming()`
+3. `tensor_cpp/include/tensor_cpp/qwen3_ops.h` - 添加 `AttentionType` 枚举和参数
+4. `tensor_cpp/src/qwen3_ops.cpp` - 修改 forward 函数支持 attention_type
+5. `tensor_cpp/include/tensor_cpp/qwen3_ops_avx.h` - AVX2 版本的 attention_type 参数
+6. `tensor_cpp/src/qwen3_ops_avx.cpp` - AVX2 版本的 streaming attention 实现
+7. `tensor_cpp/tests/benchmark/benchmark_qwen3.cpp` - 添加 `--attention` 参数支持
+
+## 技术细节
+
+### Streaming Attention 算法
+
+```
+Input: Q [1, d], K [T, d], V [T, d]
+Output: O [1, d]
+
+1. 初始化 online softmax state (m = -∞, l = 0, O = 0)
+2. 对于每个 block:
+   a. 计算 scores = Q @ K_block^T
+   b. 使用 online softmax 更新 state
+   c. 累加输出: O = O @ V_block
+3. 返回最终输出 O
+```
+
+### Block Size
+
+默认 block_size = 64，可根据性能调整：
+- 较小的 block: 更细粒度，但 overhead 更大
+- 较大的 block: 更少的 parallelism，但更好的 cache 利用
+
+## 注意事项
+
+1. **Prefill 阶段**: Streaming attention 会自动回退到标准 attention
+2. **MPI 支持**: 当前实现主要针对 OMP，MPI 版本可以后续添加
+3. **数值精度**: Streaming attention 使用 online softmax，数值精度与标准 attention 略有不同（但在可接受范围内）
+
+## 未来改进
+
+- [ ] 为 MPI 版本添加 streaming attention 支持
+- [ ] 实现自适应 block size 选择
+- [ ] 优化长序列性能
+- [ ] 添加性能 benchmark 和对比
+

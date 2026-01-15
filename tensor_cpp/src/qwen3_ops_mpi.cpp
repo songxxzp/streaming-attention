@@ -195,7 +195,8 @@ Tensor qwen3_decoder_layer_mpi_omp(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // Input layernorm
     Tensor residual = hidden_states;
@@ -204,7 +205,7 @@ Tensor qwen3_decoder_layer_mpi_omp(
     // Self-attention with MPI
     Tensor attn_output = qwen3_attention_mpi_omp(
         hidden, num_attention_heads, num_key_value_heads, head_dim,
-        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm
+        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm, attention_type
     );
 
     // Residual connection
@@ -238,7 +239,8 @@ Tensor qwen3_forward_mpi_omp(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     int rank, size;
     MPI_Comm_rank(comm, &rank);
@@ -274,7 +276,8 @@ Tensor qwen3_forward_mpi_omp(
             layer.down_proj,
             cos,
             sin,
-            comm
+            comm,
+            attention_type
         );
     }
 
@@ -326,9 +329,16 @@ Tensor qwen3_decoder_layer_mpi_omp_with_cache(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // For now, delegate to the baseline implementation with KV cache
+    // Convert MPI attention type to standard attention type
+    qwen3::AttentionType std_attention_type = qwen3::AttentionType::STANDARD;
+    if (attention_type == MPIAttentionType::STREAMING) {
+        std_attention_type = qwen3::AttentionType::STREAMING;
+    }
+
     // TODO: Optimize with MPI data parallelism for MLP and attention
     return qwen3::qwen3_decoder_layer_with_cache(
         hidden_states,
@@ -348,7 +358,8 @@ Tensor qwen3_decoder_layer_mpi_omp_with_cache(
         up_mlp,
         down_mlp,
         cos,
-        sin
+        sin,
+        std_attention_type
     );
 }
 
@@ -368,7 +379,8 @@ Tensor qwen3_forward_mpi_omp_with_cache(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     int rank, size;
     MPI_Comm_rank(comm, &rank);
@@ -377,6 +389,12 @@ Tensor qwen3_forward_mpi_omp_with_cache(
     // For now, delegate to baseline implementation with KV cache
     // TODO: Optimize with MPI data parallelism
     // All ranks compute the same result (data parallelism not yet implemented for cache)
+
+    // Convert MPI attention type to standard attention type
+    qwen3::AttentionType std_attention_type = qwen3::AttentionType::STANDARD;
+    if (attention_type == MPIAttentionType::STREAMING) {
+        std_attention_type = qwen3::AttentionType::STREAMING;
+    }
 
     Tensor result = qwen3::qwen3_forward_with_cache(
         input_ids,
@@ -389,7 +407,8 @@ Tensor qwen3_forward_mpi_omp_with_cache(
         num_attention_heads,
         num_key_value_heads,
         head_dim,
-        rms_norm_eps
+        rms_norm_eps,
+        std_attention_type
     );
 
     return result;

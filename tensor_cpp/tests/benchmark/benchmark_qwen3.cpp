@@ -152,6 +152,13 @@ BenchmarkConfig parse_args(int argc, char** argv) {
         }
     }
 
+    // Auto-derive mode from method if not explicitly set
+    if (cfg.mode == "omp") {  // Default value
+        if (cfg.method == "mpi" || cfg.method == "mpi+avx2") {
+            cfg.mode = "mpi";
+        }
+    }
+
     return cfg;
 }
 
@@ -225,35 +232,47 @@ Tensor forward_with_method(
             );
         }
     } else if (method == "mpi") {
+        // Convert standard attention type to MPI attention type
+        mpi::MPIAttentionType mpi_attention_type = mpi::MPIAttentionType::STANDARD;
+        if (attention_type == qwen3::AttentionType::STREAMING) {
+            mpi_attention_type = mpi::MPIAttentionType::STREAMING;
+        }
+
         if (kv_cache) {
             return mpi::qwen3_forward_mpi_omp_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_attention_type
             );
         } else {
             return mpi::qwen3_forward_mpi_omp(
                 input_ids, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_attention_type
             );
         }
     } else if (method == "mpi+avx2") {
+        // Convert standard attention type to MPI+AVX attention type
+        mpi_avx::MPIAttentionType mpi_avx_attention_type = mpi_avx::MPIAttentionType::STANDARD;
+        if (attention_type == qwen3::AttentionType::STREAMING) {
+            mpi_avx_attention_type = mpi_avx::MPIAttentionType::STREAMING;
+        }
+
         if (kv_cache) {
             return mpi_avx::qwen3_forward_mpi_avx_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_avx_attention_type
             );
         } else {
             return mpi_avx::qwen3_forward_mpi_avx(
                 input_ids, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_avx_attention_type
             );
         }
     }

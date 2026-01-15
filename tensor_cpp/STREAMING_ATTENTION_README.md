@@ -482,3 +482,158 @@ mpirun -np 4 --bind-to none ./benchmark_mpi_attention
 **Version**: 1.0
 
 
+# MPI+AVX2 Streaming Attention Implementation
+
+## 📚 Overview
+
+**Date**: 2025-01-15
+**Status**: ✅ Complete
+
+Successfully integrated **streaming attention into MPI+AVX2 hybrid implementation**, combining:
+- **MPI** (distributed memory parallelism)
+- **AVX2** (SIMD vectorization)
+- **Streaming Attention** (memory-efficient algorithm)
+
+## 🎯 Architecture: Three-Way Optimization
+
+### Optimization Stack
+
+```
+┌─────────────────────────────────────────┐
+│     Streaming Attention (Algorithm)     │
+│  - Block-wise processing                │
+│  - O(seq_len) memory                    │
+│  - Cache-friendly                       │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│         AVX2 (SIMD)                     │
+│  - 256-bit vector operations            │
+│  - Fused multiply-add                   │
+│  - 8x parallel floating point           │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│          MPI (Distributed)              │
+│  - Head-wise parallelism                │
+│  - Inter-node communication             │
+│  - Scalable to multiple nodes           │
+└─────────────────────────────────────────┘
+```
+
+### Implementation Strategy
+
+1. **MPI Level**: Distribute attention heads across processes
+2. **AVX2 Level**: SIMD vectorization for dot products and online softmax
+3. **Algorithm Level**: Block-wise streaming attention for memory efficiency
+
+## 📝 Implementation Details
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `include/tensor_cpp/qwen3_ops_mpi_avx.h` | Added `MPIAttentionType` enum and attention_type parameter to all functions |
+| `src/qwen3_ops_mpi_avx.cpp` | Updated implementations to support streaming attention |
+| `tests/benchmark/benchmark_qwen3.cpp` | Added attention type support for `mpi+avx2` method + auto mode derivation |
+
+### Key API
+
+```cpp
+#include "tensor_cpp/qwen3_ops_mpi_avx.h"
+
+using namespace tensor_cpp::qwen3::mpi_avx;
+
+// MPI+AVX2 + Standard attention
+Tensor output1 = qwen3_forward_mpi_avx(
+    input_ids, token_embedding, layers, norm_weight, lm_head,
+    num_layers, num_heads, kv_heads, head_dim, eps,
+    MPI_COMM_WORLD,
+    MPIAttentionType::STANDARD  // Materializes QK^T matrix
+);
+
+// MPI+AVX2 + Streaming attention
+Tensor output2 = qwen3_forward_mpi_avx(
+    input_ids, token_embedding, layers, norm_weight, lm_head,
+    num_layers, num_heads, kv_heads, head_dim, eps,
+    MPI_COMM_WORLD,
+    MPIAttentionType::STREAMING  // Memory efficient, block-wise
+);
+```
+
+## 🚀 Usage
+
+### Command Line
+
+```bash
+# Test MPI+AVX2 + Streaming
+mpirun -np 2 ./benchmark_qwen3 \
+    --model /path/to/Qwen3-0.6B/model.safetensors \
+    --phase prefill \
+    --method mpi+avx2 \
+    --attention streaming \
+    --prompt-len 128 \
+    --iters 5 \
+    --threads 8
+```
+
+### Benchmark Script
+
+```bash
+# Use automated script
+NUM_PROCS=2 PROMPT_LEN=256 ITERS=10 ./run_mpi_benchmark.sh
+```
+
+## 📊 All Supported Combinations
+
+| Method | Attention | MPI | AVX2 | Streaming | Status |
+|--------|-----------|-----|------|-----------|--------|
+| `baseline` | `standard` | ❌ | ❌ | ❌ | ✅ |
+| `baseline` | `streaming` | ❌ | ❌ | ✅ | ✅ |
+| `avx2` | `standard` | ❌ | ✅ | ❌ | ✅ |
+| `avx2` | `streaming` | ❌ | ✅ | ✅ | ✅ |
+| `mpi` | `standard` | ✅ | ❌ | ❌ | ✅ |
+| `mpi` | `streaming` | ✅ | ❌ | ✅ | ✅ |
+| `mpi+avx2` | `standard` | ✅ | ✅ | ❌ | ✅ **(NEW)**
+| `mpi+avx2` | `streaming` | ✅ | ✅ | ✅ | ✅ **(NEW)**
+
+## 🔧 Type Conversions
+
+The implementation uses three different attention type enums:
+
+```cpp
+// In benchmark_qwen3.cpp
+qwen3::AttentionType        // Generic attention type
+    ↓ convert
+mpi_avx::MPIAttentionType   // MPI+AVX2 specific type
+    ↓ convert (when calling MPI functions)
+mpi::MPIAttentionType       // MPI specific type
+    ↓ convert (when calling AVX2 cache functions)
+qwen3::AttentionType        // Back to generic type
+```
+
+## 📚 Documentation
+
+- `MPI_AVX2_STREAMING_INTEGRATION.md` - Complete integration guide
+- `MPI_BENCHMARK_README.md` - Benchmark usage instructions
+- `MPI_INTEGRATION_SUMMARY.md` - Previous MPI integration summary
+
+## 🎓 Key Features
+
+1. **Type Safety**: Each namespace has its own attention type enum
+2. **Explicit Conversion**: All type conversions are visible in code
+3. **Backward Compatible**: Default parameter is `STANDARD`
+4. **Auto Mode Derivation**: Benchmark automatically derives MPI mode from method
+5. **Consistent API**: All forward functions follow same signature pattern
+
+## 🚦 Status
+
+- **Header Files**: ✅ Updated with attention_type parameter
+- **Implementation**: ✅ Complete with type conversions
+- **Benchmark**: ✅ Supports all 8 combinations
+- **Compilation**: ✅ Successful
+- **Documentation**: ✅ Complete
+
+**Last Updated**: 2025-01-15
+**Version**: 1.0
+

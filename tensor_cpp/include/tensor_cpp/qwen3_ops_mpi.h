@@ -137,12 +137,14 @@ Tensor qwen3_decoder_layer_mpi_omp(
  * @param token_embedding Word embedding weight
  * @param layers List of decoder layer weights
  * @param norm_weight Final layer norm weight
+ * @param lm_head LM head projection weight
  * @param num_layers Number of layers
  * @param num_attention_heads Number of attention heads
  * @param num_key_value_heads Number of KV heads
  * @param head_dim Head dimension
  * @param rms_norm_eps RMS norm epsilon
  * @param comm MPI communicator
+ * @param attention_type Attention type (STANDARD or STREAMING)
  * @return Hidden states [batch_size, seq_len, hidden_size]
  */
 Tensor qwen3_forward_mpi_omp(
@@ -156,7 +158,8 @@ Tensor qwen3_forward_mpi_omp(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 /**
@@ -181,7 +184,8 @@ Tensor qwen3_decoder_layer_mpi_omp_with_cache(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 /**
@@ -199,7 +203,8 @@ Tensor qwen3_forward_mpi_omp_with_cache(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 #endif // MPI_VERSION

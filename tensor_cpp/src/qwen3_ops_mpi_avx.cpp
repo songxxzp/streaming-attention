@@ -246,16 +246,24 @@ Tensor qwen3_decoder_layer_mpi_avx(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // Input layernorm
     Tensor residual = hidden_states;
     Tensor hidden = rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
 
     // Self-attention with MPI
+    // Convert MPIAttentionType to mpi::MPIAttentionType for the call
+    mpi::MPIAttentionType mpi_attn_type = mpi::MPIAttentionType::STANDARD;
+    if (attention_type == MPIAttentionType::STREAMING) {
+        mpi_attn_type = mpi::MPIAttentionType::STREAMING;
+    }
+
     Tensor attn_output = qwen3::mpi::qwen3_attention_mpi_omp(
         hidden, num_attention_heads, num_key_value_heads, head_dim,
-        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm
+        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm,
+        mpi_attn_type
     );
 
     // Residual
@@ -289,7 +297,8 @@ Tensor qwen3_forward_mpi_avx(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // Embed tokens
     Tensor hidden_states = embedding(input_ids, token_embedding);
@@ -321,7 +330,8 @@ Tensor qwen3_forward_mpi_avx(
             layer.down_proj,
             cos,
             sin,
-            comm
+            comm,
+            attention_type
         );
     }
 
@@ -373,7 +383,8 @@ Tensor qwen3_decoder_layer_mpi_avx_with_cache(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     // Split QKV projections to match AVX2 interface
     size_t q_size = num_attention_heads * head_dim;
@@ -408,6 +419,12 @@ Tensor qwen3_decoder_layer_mpi_avx_with_cache(
     Tensor v_proj(std::move(v_data), Shape({static_cast<long>(v_size), static_cast<long>(hidden_size)}));
 
     // Delegate to AVX2 implementation with KV cache
+    // Convert MPIAttentionType to qwen3::AttentionType
+    qwen3::AttentionType avx_attn_type = qwen3::AttentionType::STANDARD;
+    if (attention_type == MPIAttentionType::STREAMING) {
+        avx_attn_type = qwen3::AttentionType::STREAMING;
+    }
+
     // TODO: Optimize with MPI data parallelism for MLP and attention
     return tensor_cpp::qwen3::avx2::qwen3_decoder_layer_avx_with_cache(
         hidden_states,
@@ -429,7 +446,8 @@ Tensor qwen3_decoder_layer_mpi_avx_with_cache(
         up_mlp,
         down_mlp,
         cos,
-        sin
+        sin,
+        avx_attn_type
     );
 }
 
@@ -449,11 +467,18 @@ Tensor qwen3_forward_mpi_avx_with_cache(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm
+    MPI_Comm comm,
+    MPIAttentionType attention_type
 ) {
     int rank, size;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
+
+    // Convert MPIAttentionType to qwen3::AttentionType
+    qwen3::AttentionType avx_attn_type = qwen3::AttentionType::STANDARD;
+    if (attention_type == MPIAttentionType::STREAMING) {
+        avx_attn_type = qwen3::AttentionType::STREAMING;
+    }
 
     // For now, delegate to AVX2 implementation with KV cache
     // TODO: Optimize with MPI data parallelism
@@ -470,7 +495,8 @@ Tensor qwen3_forward_mpi_avx_with_cache(
         num_attention_heads,
         num_key_value_heads,
         head_dim,
-        rms_norm_eps
+        rms_norm_eps,
+        avx_attn_type
     );
 
     return result;

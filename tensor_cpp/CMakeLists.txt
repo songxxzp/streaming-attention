@@ -107,7 +107,8 @@ add_executable(benchmark_attention tests/benchmark/benchmark_attention.cpp)
 target_link_libraries(benchmark_attention PRIVATE tensor_cpp)
 
 add_executable(benchmark_qwen3 tests/benchmark/benchmark_qwen3.cpp)
-target_link_libraries(benchmark_qwen3 PRIVATE tensor_cpp)
+target_link_libraries(benchmark_qwen3 PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+target_compile_definitions(benchmark_qwen3 PRIVATE USE_MPI)
 
 add_executable(benchmark_performance tests/benchmark/benchmark_performance.cpp)
 target_link_libraries(benchmark_performance PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)

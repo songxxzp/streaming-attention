@@ -23,6 +23,14 @@ namespace mpi_avx {
 
 #ifdef MPI_VERSION
 
+/**
+ * @brief Attention type for MPI computation
+ */
+enum class MPIAttentionType {
+    STANDARD,   ///< Standard attention (materializes QK^T matrix)
+    STREAMING   ///< Streaming attention (block-wise, memory efficient)
+};
+
 // ============================================================================
 // Qwen3 MLP (SwiGLU) with MPI+AVX2
 // ============================================================================
@@ -73,6 +81,7 @@ Tensor qwen3_mlp_mpi_avx(
  * @param cos RoPE cosine values
  * @param sin RoPE sine values
  * @param comm MPI communicator
+ * @param attention_type Attention computation type (standard or streaming)
  * @return Output tensor [batch, seq_len, hidden_size]
  */
 Tensor qwen3_decoder_layer_mpi_avx(
@@ -92,7 +101,8 @@ Tensor qwen3_decoder_layer_mpi_avx(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 // ============================================================================
@@ -112,6 +122,7 @@ Tensor qwen3_decoder_layer_mpi_avx(
  * @param head_dim Head dimension
  * @param rms_norm_eps RMS norm epsilon
  * @param comm MPI communicator
+ * @param attention_type Attention computation type (standard or streaming)
  * @return Hidden states [batch_size, seq_len, hidden_size]
  */
 Tensor qwen3_forward_mpi_avx(
@@ -125,7 +136,8 @@ Tensor qwen3_forward_mpi_avx(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 /**
@@ -150,7 +162,8 @@ Tensor qwen3_decoder_layer_mpi_avx_with_cache(
     const Tensor& down_mlp,
     const Tensor& cos,
     const Tensor& sin,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 /**
@@ -168,7 +181,8 @@ Tensor qwen3_forward_mpi_avx_with_cache(
     size_t num_key_value_heads,
     size_t head_dim,
     float rms_norm_eps,
-    MPI_Comm comm = MPI_COMM_WORLD
+    MPI_Comm comm = MPI_COMM_WORLD,
+    MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
 #endif // MPI_VERSION

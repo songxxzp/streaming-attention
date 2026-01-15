@@ -708,18 +708,20 @@ Tensor qwen3_decoder_layer_avx_with_cache(
 
     // Compute attention based on attention_type
     Tensor attn_output;
-    if (attention_type == AttentionType::STREAMING && q_seq_len == 1) {
-        // Use streaming attention for decode phase
-        // Note: streaming attention doesn't need mask (handles causal via online softmax)
-        attn_output = self_attention_streaming(q_rope, k_repeated, v_repeated, scale);
-    } else {
-        // Use standard attention
-        // For prefill or when explicitly requested, use standard attention
-        if (attention_type == AttentionType::STREAMING) {
-            // Streaming attention requested, but q_seq_len > 1, fall back to standard
-            // (streaming attention is only efficient for single query position)
+    if (attention_type == AttentionType::STREAMING) {
+        if (q_seq_len == 1) {
+            // Decode phase: use single-query streaming attention
+            // Note: streaming attention doesn't need mask (handles causal via online softmax)
+            attn_output = self_attention_streaming(q_rope, k_repeated, v_repeated, scale);
+        } else {
+            // Prefill phase: use block-wise streaming attention
+            // Handles causal constraint internally
+            attn_output = self_attention_streaming_blockwise(
+                q_rope, k_repeated, v_repeated, scale, 32, 64
+            );
         }
-        // Use AVX2-optimized attention for standard mode
+    } else {
+        // Use standard attention with AVX2 optimization
         attn_output = self_attention_avx2(q_rope, k_repeated, v_repeated, &mask, scale);
     }
 

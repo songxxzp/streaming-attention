@@ -14,6 +14,7 @@
 #include <limits>
 #include <complex>
 #include <random>
+#include <cstring>
 
 namespace tensor_cpp {
 namespace ops {
@@ -905,6 +906,170 @@ Tensor self_attention_streaming(
                 for (size_t d = 0; d < head_dim; ++d) {
                     output_data[out_offset + d] = result[d] * scale;
                 }
+            }
+        }
+    }
+
+    return Tensor(std::move(output_data), query.shape());
+}
+
+// ============================================================================
+// Block-wise Streaming Attention (for Prefill Phase)
+// ============================================================================
+
+/**
+ * Process a Q block with causal constraint
+ * Each query position in the block maintains its own online softmax state
+ */
+inline void process_q_block_causal(
+    const float* Q_block,          // [q_block_size, head_dim]
+    const float* K_all,            // [kv_seq_len, head_dim]
+    const float* V_all,            // [kv_seq_len, head_dim]
+    float* output_block,           // [q_block_size, head_dim]
+    int q_block_start,             // Starting position of this Q block
+    int q_block_size,              // Number of queries in this block
+    int kv_seq_len,                // Total KV sequence length
+    int head_dim,                  // Head dimension
+    int kv_block_size,             // KV block size
+    float scale                    // Scaling factor
+) {
+    // Each query position in the block has its own state
+    std::vector<OnlineSoftmaxState> states(q_block_size);
+    std::vector<std::vector<float>> outputs(q_block_size, std::vector<float>(head_dim, 0.0f));
+
+    // Process KV blocks sequentially
+    int num_kv_blocks = (kv_seq_len + kv_block_size - 1) / kv_block_size;
+
+    for (int kv_block_idx = 0; kv_block_idx < num_kv_blocks; ++kv_block_idx) {
+        int kv_start = kv_block_idx * kv_block_size;
+        int kv_end = std::min(kv_start + kv_block_size, kv_seq_len);
+        int current_kv_size = kv_end - kv_start;
+
+        const float* K_block = K_all + kv_start * head_dim;
+        const float* V_block = V_all + kv_start * head_dim;
+
+        // For each query in the Q block
+        for (int q_local = 0; q_local < q_block_size; ++q_local) {
+            int q_global = q_block_start + q_local;
+
+            // Check if this KV block is relevant (causal constraint)
+            if (kv_start >= q_global + 1) {
+                // This KV block is entirely in the future, skip
+                continue;
+            }
+
+            // Compute effective KV range for this query (causal)
+            int effective_kv_start = kv_start;
+            int effective_kv_end = std::min(kv_end, q_global + 1);
+
+            if (effective_kv_start >= effective_kv_end) {
+                continue;  // No valid positions in this block
+            }
+
+            int effective_size = effective_kv_end - effective_kv_start;
+
+            // Compute scores for this query against the effective KV range
+            std::vector<float> scores(effective_size);
+
+            const float* q_vec = Q_block + q_local * head_dim;
+
+            for (int kv_local = 0; kv_local < effective_size; ++kv_local) {
+                int kv_global = effective_kv_start + kv_local;
+                const float* k_vec = K_all + kv_global * head_dim;
+
+                // Dot product
+                float sum = 0.0f;
+                for (int d = 0; d < head_dim; ++d) {
+                    sum += q_vec[d] * k_vec[d];
+                }
+                scores[kv_local] = sum * scale;
+            }
+
+            // Get corresponding V values
+            const float* V_effective = V_all + effective_kv_start * head_dim;
+
+            // Update online softmax for this query
+            process_streaming_block(
+                scores.data(),
+                V_effective,
+                states[q_local],
+                outputs[q_local].data(),
+                effective_size,
+                head_dim
+            );
+        }
+    }
+
+    // Copy outputs to output block
+    for (int q_local = 0; q_local < q_block_size; ++q_local) {
+        std::memcpy(output_block + q_local * head_dim,
+                   outputs[q_local].data(),
+                   head_dim * sizeof(float));
+    }
+}
+
+Tensor self_attention_streaming_blockwise(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale,
+    int q_block_size,
+    int kv_block_size
+) {
+    // query: [batch, num_heads, q_seq_len, head_dim]
+    // key:   [batch, num_heads, kv_seq_len, head_dim]
+    // value: [batch, num_heads, kv_seq_len, head_dim]
+    const Shape& q_shape = query.shape();
+    size_t batch = q_shape[0];
+    size_t num_heads = q_shape[1];
+    size_t q_seq_len = q_shape[2];
+    size_t head_dim = q_shape[3];
+
+    const Shape& k_shape = key.shape();
+    size_t kv_seq_len = k_shape[2];
+
+    // Output: [batch, num_heads, q_seq_len, head_dim]
+    size_t output_size = batch * num_heads * q_seq_len * head_dim;
+    std::vector<float> output_data(output_size);
+
+    // Calculate number of Q blocks
+    int num_q_blocks = (q_seq_len + q_block_size - 1) / q_block_size;
+
+    #pragma omp parallel for if(batch * num_heads > 1)
+    for (size_t b = 0; b < batch; ++b) {
+        for (size_t h = 0; h < num_heads; ++h) {
+            // Get base pointers for this batch and head
+            size_t base_offset = (b * num_heads + h) * q_seq_len * head_dim;
+            const float* Q = query.data() + base_offset;
+
+            size_t kv_base_offset = (b * num_heads + h) * kv_seq_len * head_dim;
+            const float* K = key.data() + kv_base_offset;
+            const float* V = value.data() + kv_base_offset;
+
+            float* output = output_data.data() + base_offset;
+
+            // Process Q blocks
+            for (int q_block_idx = 0; q_block_idx < num_q_blocks; ++q_block_idx) {
+                int q_start = q_block_idx * q_block_size;
+                int q_end = std::min(q_start + q_block_size, static_cast<int>(q_seq_len));
+                int current_q_size = q_end - q_start;
+
+                const float* Q_block = Q + q_start * head_dim;
+                float* output_block = output + q_start * head_dim;
+
+                // Process this Q block with causal constraint
+                process_q_block_causal(
+                    Q_block,
+                    K,
+                    V,
+                    output_block,
+                    q_start,
+                    current_q_size,
+                    kv_seq_len,
+                    head_dim,
+                    kv_block_size,
+                    scale
+                );
             }
         }
     }

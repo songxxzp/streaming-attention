@@ -244,6 +244,30 @@ Tensor self_attention_streaming(
     int block_size = 64
 );
 
+/**
+ * Block-wise Streaming Attention (for prefill phase)
+ *
+ * Processes queries and keys in blocks using online softmax.
+ * Suitable for prefill phase with multiple query positions.
+ * Maintains causality by only attending to previous positions.
+ *
+ * @param query   (batch, num_heads, q_seq_len, head_dim)
+ * @param key     (batch, num_heads, kv_seq_len, head_dim)
+ * @param value   (batch, num_heads, kv_seq_len, head_dim)
+ * @param scale   Scaling factor (typically 1/sqrt(head_dim))
+ * @param q_block_size Size of query blocks
+ * @param kv_block_size Size of key/value blocks
+ * @return        (batch, num_heads, q_seq_len, head_dim)
+ */
+Tensor self_attention_streaming_blockwise(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale = 1.0f,
+    int q_block_size = 32,
+    int kv_block_size = 64
+);
+
 // ============================================================================
 // MPI Functions
 // ============================================================================

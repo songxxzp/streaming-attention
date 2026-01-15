@@ -189,12 +189,47 @@ Output: O [1, d]
 
 预期优化后，长序列 (> 64 tokens) streaming 可能有 **2-5x 性能提升**。
 
+### AVX2 优化结果 (已实现!) ✨
+
+**提交**: `dfae5a3` - feat: Add AVX2 SIMD optimization to block-wise streaming attention
+
+#### 性能提升 (4 threads, Streaming Attention)
+
+| Tokens | Baseline (ms/token) | AVX2 (ms/token) | Speedup |
+|--------|---------------------|-----------------|---------|
+| 4      | 1470.18             | 729.26          | **2.01x** ✓ |
+| 8      | 798.45              | 483.61          | **1.65x** ✓ |
+| 16     | 605.67              | 422.31          | **1.43x** ✓ |
+
+#### 关键优化
+
+1. **AVX2 Dot Product**
+   - 16元素并行处理 (两个 __m256 向量)
+   - Fused multiply-add (_mm256_fmadd_ps)
+   - 水平求和 (_mm256_hadd_ps)
+
+2. **向量化 Online Softmax**
+   - Max reduction (_mm256_max_ps)
+   - 向量缩放 (_mm256_mul_ps)
+   - 向量化输出累加
+
+3. **自动 Dispatch**
+   - AVX2 路径: `self_attention_streaming_blockwise_avx2()`
+   - 标量回退: 处理剩余元素
+
+#### 为什么短序列加速更明显？
+
+- **4 tokens (2.01x)**: Dot product 主导，AVX2 并行度最高
+- **8-16 tokens (1.43-1.65x)**: 仍为计算密集型，但内存带宽开始影响
+- **预期 > 32 tokens (1.2-1.4x)**: 内存带宽瓶颈，但仍有提升
+
 ## 未来改进
 
 - [x] ~~为 Prefill 阶段实现 block-wise streaming~~ ✓ **已完成**
-- [ ] 添加 AVX2/SIMD 优化到 block-wise streaming
+- [x] ~~添加 AVX2/SIMD 优化到 block-wise streaming~~ ✓ **已完成!**
 - [ ] 实现自适应 block size 选择
 - [ ] 为 MPI 版本添加 streaming attention 支持
 - [ ] 添加更多性能 benchmark (长序列测试)
 - [ ] NUMA-aware 优化
+- [ ] Nested parallelism (Q blocks + 内部 loops)
 

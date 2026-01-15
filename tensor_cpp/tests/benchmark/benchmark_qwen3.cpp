@@ -54,6 +54,7 @@ struct BenchmarkConfig {
     // Legacy (for backward compatibility)
     std::string attention = "standard";     // standard | streaming (deprecated)
 
+    int batch_size = 1;                    // batch大小
     int prompt_len = 128;                  // prompt长度 (prefill阶段)
     int gen_len = 100;                     // 生成长度 (decode阶段)
     int iters = 10;                        // 迭代次数
@@ -86,6 +87,7 @@ void print_usage(const char* prog) {
               << "  --attention TYPE          attention类型: standard 或 streaming [默认: standard]\n"
               << "                            映射: standard→headwise+standard, streaming→headwise+online_softmax\n"
               << "\n"
+              << "  --batch-size N            batch大小 [默认: 1]\n"
               << "  --prompt-len N            prompt长度 [默认: 128]\n"
               << "  --gen-len N               生成长度 [默认: 100]\n"
               << "  --iters N                 迭代次数 [默认: 10]\n"
@@ -118,6 +120,8 @@ BenchmarkConfig parse_args(int argc, char** argv) {
         } else if (strcmp(argv[i], "--attention") == 0 && i + 1 < argc) {
             // Legacy option (deprecated)
             cfg.attention = argv[++i];
+        } else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc) {
+            cfg.batch_size = std::atoi(argv[++i]);
         } else if (strcmp(argv[i], "--prompt-len") == 0 && i + 1 < argc) {
             cfg.prompt_len = std::atoi(argv[++i]);
         } else if (strcmp(argv[i], "--gen-len") == 0 && i + 1 < argc) {
@@ -213,6 +217,22 @@ std::vector<long> generate_random_tokens(int count, int vocab_size) {
     }
 
     return tokens;
+}
+
+// 为batch处理复制token IDs
+std::vector<long> replicate_tokens_for_batch(const std::vector<long>& tokens, int batch_size) {
+    if (batch_size <= 1) {
+        return tokens;
+    }
+
+    std::vector<long> batched_tokens;
+    batched_tokens.reserve(tokens.size() * batch_size);
+
+    for (int b = 0; b < batch_size; ++b) {
+        batched_tokens.insert(batched_tokens.end(), tokens.begin(), tokens.end());
+    }
+
+    return batched_tokens;
 }
 
 // 获取方法名称
@@ -340,8 +360,9 @@ Tensor forward_with_method(
 // Prefill阶段基准测试
 double benchmark_prefill(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::vector<long> input_ids = generate_random_tokens(cfg.prompt_len, weights.vocab_size);
-    Shape input_shape({1, static_cast<long>(input_ids.size())});
-    TensorL input(input_ids, input_shape);
+    std::vector<long> batched_ids = replicate_tokens_for_batch(input_ids, cfg.batch_size);
+    Shape input_shape({static_cast<long>(cfg.batch_size), static_cast<long>(input_ids.size())});
+    TensorL input(batched_ids, input_shape);
 
     // 预热
     for (int i = 0; i < cfg.warmup; ++i) {
@@ -366,7 +387,7 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
     // 初始化KV cache
     auto kv_cache = std::make_unique<KVCache>(
         weights.num_layers,
-        1,
+        cfg.batch_size,
         weights.num_key_value_heads,
         weights.head_dim,
         4096
@@ -374,8 +395,9 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
 
     // Prefill阶段：处理初始prompt
     std::vector<long> prompt_ids = generate_random_tokens(16, weights.vocab_size);
-    Shape prompt_shape({1, static_cast<long>(prompt_ids.size())});
-    TensorL prompt_input(prompt_ids, prompt_shape);
+    std::vector<long> batched_ids = replicate_tokens_for_batch(prompt_ids, cfg.batch_size);
+    Shape prompt_shape({static_cast<long>(cfg.batch_size), static_cast<long>(prompt_ids.size())});
+    TensorL prompt_input(batched_ids, prompt_shape);
 
     Tensor prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
@@ -409,8 +431,9 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
     // 预热
     for (int i = 0; i < cfg.warmup; ++i) {
         std::vector<long> new_token = {next_token};
-        Shape new_shape({1, 1});
-        TensorL new_input(new_token, new_shape);
+        std::vector<long> batched_token = replicate_tokens_for_batch(new_token, cfg.batch_size);
+        Shape new_shape({static_cast<long>(cfg.batch_size), 1});
+        TensorL new_input(batched_token, new_shape);
 
         Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
     }
@@ -441,8 +464,9 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
 
     for (int step = 0; step < cfg.gen_len; ++step) {
         std::vector<long> new_token = {next_token};
-        Shape new_shape({1, 1});
-        TensorL new_input(new_token, new_shape);
+        std::vector<long> batched_token = replicate_tokens_for_batch(new_token, cfg.batch_size);
+        Shape new_shape({static_cast<long>(cfg.batch_size), 1});
+        TensorL new_input(batched_token, new_shape);
 
         Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
@@ -479,8 +503,9 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
 double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     // 初始prompt
     std::vector<long> prompt_ids = generate_random_tokens(4, weights.vocab_size);  // 使用较短的prompt
-    Shape prompt_shape({1, static_cast<long>(prompt_ids.size())});
-    TensorL prompt_input(prompt_ids, prompt_shape);
+    std::vector<long> batched_ids = replicate_tokens_for_batch(prompt_ids, cfg.batch_size);
+    Shape prompt_shape({static_cast<long>(cfg.batch_size), static_cast<long>(prompt_ids.size())});
+    TensorL prompt_input(batched_ids, prompt_shape);
 
     // 初始forward pass获取第一个token
     Tensor prefill_output = forward_with_method(prompt_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
@@ -517,8 +542,9 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
 
     // 预热
     for (int i = 0; i < cfg.warmup; ++i) {
-        Shape new_shape({1, static_cast<long>(prompt_ids.size())});
-        TensorL new_input(prompt_ids, new_shape);
+        std::vector<long> batched_ids = replicate_tokens_for_batch(prompt_ids, cfg.batch_size);
+        Shape new_shape({static_cast<long>(cfg.batch_size), static_cast<long>(prompt_ids.size())});
+        TensorL new_input(batched_ids, new_shape);
         Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
         // 获取next token
@@ -553,8 +579,9 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
 
     for (int step = 0; step < cfg.gen_len; ++step) {
         // 每次都重新计算整个序列
-        Shape new_shape({1, static_cast<long>(prompt_ids.size())});
-        TensorL new_input(prompt_ids, new_shape);
+        std::vector<long> batched_ids = replicate_tokens_for_batch(prompt_ids, cfg.batch_size);
+        Shape new_shape({static_cast<long>(cfg.batch_size), static_cast<long>(prompt_ids.size())});
+        TensorL new_input(batched_ids, new_shape);
 
         Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
@@ -688,7 +715,8 @@ void demo_decode_generation(
     const Qwen3Weights& weights,
     const std::string& method,
     int gen_len,
-    bool use_kv_cache
+    bool use_kv_cache,
+    int batch_size = 1
 ) {
     using namespace tensor_cpp::ops;
 
@@ -706,7 +734,7 @@ void demo_decode_generation(
     std::unique_ptr<KVCache> kv_cache;
     if (use_kv_cache) {
         kv_cache = std::make_unique<KVCache>(
-            weights.num_layers, 1, weights.num_key_value_heads,
+            weights.num_layers, batch_size, weights.num_key_value_heads,
             weights.head_dim, 4096
         );
     }
@@ -725,11 +753,13 @@ void demo_decode_generation(
         if (use_kv_cache && step > 0) {
             // Decode阶段：只传入最新token
             std::vector<long> new_token = {generated.back()};
-            input = TensorL(new_token, Shape({1, 1}));
+            std::vector<long> batched_token = replicate_tokens_for_batch(new_token, batch_size);
+            input = TensorL(batched_token, Shape({static_cast<long>(batch_size), 1}));
         } else {
             // Prefill阶段或不使用cache：传入所有tokens
-            Shape input_shape({1, static_cast<long>(generated.size())});
-            input = TensorL(generated, input_shape);
+            std::vector<long> batched_generated = replicate_tokens_for_batch(generated, batch_size);
+            Shape input_shape({static_cast<long>(batch_size), static_cast<long>(generated.size())});
+            input = TensorL(batched_generated, input_shape);
         }
 
         // Forward pass
@@ -823,8 +853,9 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
 
     // 直接使用传入的token IDs
     std::vector<long> input_ids = cfg.verify_tokens;
-    Shape input_shape({1, static_cast<long>(input_ids.size())});
-    TensorL input(input_ids, input_shape);
+    std::vector<long> batched_ids = replicate_tokens_for_batch(input_ids, cfg.batch_size);
+    Shape input_shape({static_cast<long>(cfg.batch_size), static_cast<long>(input_ids.size())});
+    TensorL input(batched_ids, input_shape);
 
     std::vector<std::string> methods = {"baseline", "avx2"};
     std::vector<std::pair<std::string, Tensor>> outputs_with_cache;
@@ -844,7 +875,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     for (const auto& method : methods) {
         std::cout << "  " << get_method_name(method) << "... ";
         auto kv_cache = std::make_unique<KVCache>(
-            weights.num_layers, 1, weights.num_key_value_heads, weights.head_dim, 4096);
+            weights.num_layers, cfg.batch_size, weights.num_key_value_heads, weights.head_dim, 4096);
         Tensor output = forward_with_method(input, kv_cache.get(), weights, method, cfg.parallel_strategy, cfg.attention_algo);
         outputs_with_cache.push_back({method, output});
         std::cout << "Done (output size: " << output.size() << ")\n";
@@ -972,9 +1003,9 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
 
     // 演示baseline和AVX2的生成
     // 这里生成cfg.gen_len个token来验证功能
-    demo_decode_generation(demo_prompt_ids, weights, "baseline", cfg.gen_len, cfg.use_kv_cache);
+    demo_decode_generation(demo_prompt_ids, weights, "baseline", cfg.gen_len, cfg.use_kv_cache, cfg.batch_size);
     std::cout << "\n";
-    demo_decode_generation(demo_prompt_ids, weights, "avx2", cfg.gen_len, cfg.use_kv_cache);
+    demo_decode_generation(demo_prompt_ids, weights, "avx2", cfg.gen_len, cfg.use_kv_cache, cfg.batch_size);
 
     std::cout << "\n============================================================\n";
     std::cout << "Note: This demo uses greedy decoding (argmax).\n";

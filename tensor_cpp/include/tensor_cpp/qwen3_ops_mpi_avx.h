@@ -24,11 +24,28 @@ namespace mpi_avx {
 #ifdef MPI_VERSION
 
 /**
- * @brief Attention type for MPI computation
+ * @brief Parallel strategy for MPI computation
+ */
+enum class ParallelStrategy {
+    HEAD_WISE,   ///< Head-wise parallelism (按注意力头并行)
+    SEQUENCE     ///< Sequence parallelism (按序列维度并行)
+};
+
+/**
+ * @brief Attention algorithm
+ */
+enum class AttentionAlgorithm {
+    STANDARD,        ///< Standard attention (materializes QK^T matrix)
+    ONLINE_SOFTMAX   ///< Online softmax / streaming attention (memory efficient)
+};
+
+/**
+ * @brief Combined MPI attention type (for backward compatibility)
+ * @deprecated Use separate ParallelStrategy and AttentionAlgorithm instead
  */
 enum class MPIAttentionType {
-    STANDARD,   ///< Standard attention (materializes QK^T matrix)
-    STREAMING   ///< Streaming attention (block-wise, memory efficient)
+    STANDARD,   ///< Head-wise + Standard attention
+    STREAMING   ///< Head-wise + Online softmax (deprecated alias for HEAD_WISE_ONLINE_SOFTMAX)
 };
 
 // ============================================================================
@@ -103,6 +120,55 @@ Tensor qwen3_decoder_layer_mpi_avx(
     const Tensor& sin,
     MPI_Comm comm = MPI_COMM_WORLD,
     MPIAttentionType attention_type = MPIAttentionType::STANDARD
+);
+
+/**
+ * @brief Qwen3 decoder layer with configurable parallel strategy and algorithm
+ *
+ * Supports both head-wise and sequence parallelism with standard or online softmax attention,
+ * combined with AVX2 SIMD optimization
+ *
+ * @param hidden_states Input [batch, seq_len, hidden_size]
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param rms_norm_eps RMS norm epsilon
+ * @param input_layernorm_weight Input layer norm weight
+ * @param qkv_projs Combined QKV projection weights
+ * @param o_proj Output projection weight
+ * @param q_norm_weight Q normalization weight
+ * @param k_norm_weight K normalization weight
+ * @param post_attention_layernorm_weight Post attention layer norm weight
+ * @param gate_mlp MLP gate projection weight
+ * @param up_mlp MLP up projection weight
+ * @param down_mlp MLP down projection weight
+ * @param cos RoPE cosine values
+ * @param sin RoPE sine values
+ * @param comm MPI communicator
+ * @param strategy Parallel strategy (HEAD_WISE or SEQUENCE)
+ * @param algorithm Attention algorithm (STANDARD or ONLINE_SOFTMAX)
+ * @return Output tensor [batch, seq_len, hidden_size]
+ */
+Tensor qwen3_decoder_layer_mpi_avx(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
 );
 
 // ============================================================================

@@ -282,6 +282,59 @@ Tensor qwen3_decoder_layer_mpi_avx(
     return hidden;
 }
 
+// New overload with separated parallel strategy and algorithm
+Tensor qwen3_decoder_layer_mpi_avx(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+) {
+    // Input layernorm
+    Tensor residual = hidden_states;
+    Tensor hidden = rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
+
+    // Self-attention with MPI
+    // Convert mpi_avx enums to mpi enums for the call
+    mpi::ParallelStrategy mpi_strategy = static_cast<mpi::ParallelStrategy>(strategy);
+    mpi::AttentionAlgorithm mpi_algorithm = static_cast<mpi::AttentionAlgorithm>(algorithm);
+
+    Tensor attn_output = qwen3::mpi::qwen3_attention_mpi_omp(
+        hidden, num_attention_heads, num_key_value_heads, head_dim,
+        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm,
+        mpi_strategy, mpi_algorithm
+    );
+
+    // Residual
+    hidden = residual + attn_output;
+
+    // Post-attention layernorm
+    residual = hidden;
+    hidden = rms_norm(hidden, &post_attention_layernorm_weight, rms_norm_eps);
+
+    // MLP with MPI+AVX2
+    Tensor mlp_output = qwen3_mlp_mpi_avx(hidden, gate_mlp, up_mlp, down_mlp, comm);
+
+    // Residual
+    hidden = residual + mlp_output;
+
+    return hidden;
+}
+
 // ============================================================================
 // Qwen3 Model (Full Forward Pass) with MPI+AVX2
 // ============================================================================

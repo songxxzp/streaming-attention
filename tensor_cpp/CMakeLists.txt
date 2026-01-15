@@ -80,6 +80,9 @@ target_link_libraries(test_mpi_ops PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenM
 add_executable(test_tensor_parallel tests/unit/test_tensor_parallel.cpp)
 target_link_libraries(test_tensor_parallel PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 
+add_executable(test_parallel_strategies tests/unit/test_parallel_strategies.cpp)
+target_link_libraries(test_parallel_strategies PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
+
 add_executable(test_weights_broadcast tests/unit/test_weights_broadcast.cpp)
 target_link_libraries(test_weights_broadcast PRIVATE tensor_cpp MPI::MPI_CXX OpenMP::OpenMP_CXX)
 

@@ -174,6 +174,122 @@ Tensor qwen3_attention_mpi_omp(
     return output;
 }
 
+// New overload with separated parallel strategy and algorithm
+Tensor qwen3_attention_mpi_omp(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+) {
+    // hidden_states: [batch, seq_len, hidden_size]
+    size_t batch_size = hidden_states.shape()[0];
+    size_t seq_len = hidden_states.shape()[1];
+    size_t hidden_size = hidden_states.shape()[2];
+
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Compute QKV projection (same as old version)
+    size_t q_dim = num_attention_heads * head_dim;
+    size_t kv_dim = num_key_value_heads * head_dim;
+    size_t total_qkv_dim = q_dim + 2 * kv_dim;
+    size_t weight_hidden_size = qkv_projs.shape()[1];
+
+    // Extract Q projection
+    std::vector<float> q_proj_data(q_dim * weight_hidden_size);
+    for (size_t i = 0; i < q_dim; ++i) {
+        for (size_t j = 0; j < weight_hidden_size; ++j) {
+            q_proj_data[i * weight_hidden_size + j] = qkv_projs[i * weight_hidden_size + j];
+        }
+    }
+    Tensor q_proj(std::move(q_proj_data), Shape({static_cast<long>(q_dim), static_cast<long>(weight_hidden_size)}));
+
+    // Extract K projection
+    std::vector<float> k_proj_data(kv_dim * weight_hidden_size);
+    for (size_t i = 0; i < kv_dim; ++i) {
+        for (size_t j = 0; j < weight_hidden_size; ++j) {
+            k_proj_data[i * weight_hidden_size + j] = qkv_projs[(q_dim + i) * weight_hidden_size + j];
+        }
+    }
+    Tensor k_proj(std::move(k_proj_data), Shape({static_cast<long>(kv_dim), static_cast<long>(weight_hidden_size)}));
+
+    // Extract V projection
+    std::vector<float> v_proj_data(kv_dim * weight_hidden_size);
+    for (size_t i = 0; i < kv_dim; ++i) {
+        for (size_t j = 0; j < weight_hidden_size; ++j) {
+            v_proj_data[i * weight_hidden_size + j] = qkv_projs[(q_dim + kv_dim + i) * weight_hidden_size + j];
+        }
+    }
+    Tensor v_proj(std::move(v_proj_data), Shape({static_cast<long>(kv_dim), static_cast<long>(weight_hidden_size)}));
+
+    // Compute Q, K, V
+    Tensor hidden_reshaped = hidden_states.view({static_cast<long>(batch_size * seq_len), static_cast<long>(hidden_size)});
+    Tensor q = ops::mpi::linear_mpi_omp(hidden_reshaped, q_proj, nullptr, comm);
+    Tensor k = ops::mpi::linear_mpi_omp(hidden_reshaped, k_proj, nullptr, comm);
+    Tensor v = ops::mpi::linear_mpi_omp(hidden_reshaped, v_proj, nullptr, comm);
+
+    // Reshape Q, K, V
+    q = q.view({static_cast<long>(batch_size), static_cast<long>(num_attention_heads),
+                static_cast<long>(seq_len), static_cast<long>(head_dim)});
+    k = k.view({static_cast<long>(batch_size), static_cast<long>(num_key_value_heads),
+                static_cast<long>(seq_len), static_cast<long>(head_dim)});
+    v = v.view({static_cast<long>(batch_size), static_cast<long>(num_key_value_heads),
+                static_cast<long>(seq_len), static_cast<long>(head_dim)});
+
+    // Apply RoPE
+    auto qk_rope = apply_rotary_pos_emb(q, k, cos, sin);
+    q = qk_rope.first;
+    k = qk_rope.second;
+
+    // Select attention implementation based on strategy and algorithm
+    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    Tensor attn_output;
+
+    if (strategy == ParallelStrategy::HEAD_WISE) {
+        // Head-wise parallelism
+        if (algorithm == AttentionAlgorithm::ONLINE_SOFTMAX) {
+            attn_output = ops::mpi::attention_headwise_online_softmax(
+                q, k, v, nullptr, scale,
+                num_attention_heads, num_key_value_heads, comm
+            );
+        } else {  // STANDARD
+            attn_output = ops::mpi::attention_headwise_standard(
+                q, k, v, nullptr, scale,
+                num_attention_heads, num_key_value_heads, comm
+            );
+        }
+    } else {  // SEQUENCE
+        // Sequence parallelism
+        if (algorithm == AttentionAlgorithm::ONLINE_SOFTMAX) {
+            size_t global_seq_len = seq_len * size;  // Assumes equal distribution
+            attn_output = ops::mpi::attention_sequence_online_softmax(
+                q, k, v, nullptr, scale,
+                num_attention_heads, num_key_value_heads,
+                global_seq_len, comm
+            );
+        } else {
+            throw std::runtime_error("Sequence parallelism with standard attention not implemented. Use ONLINE_SOFTMAX algorithm.");
+        }
+    }
+
+    // Output projection (same as old version)
+    attn_output = attn_output.view({static_cast<long>(batch_size * seq_len), static_cast<long>(num_attention_heads * head_dim)});
+    Tensor output = ops::mpi::linear_mpi_omp(attn_output, o_proj, nullptr, comm);
+    output = output.view({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(hidden_size)});
+
+    return output;
+}
+
 // ============================================================================
 // Qwen3 Decoder Layer with MPI+OpenMP
 // ============================================================================

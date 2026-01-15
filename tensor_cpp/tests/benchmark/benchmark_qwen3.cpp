@@ -46,7 +46,13 @@ struct BenchmarkConfig {
     std::string phase = "prefill";         // prefill | decode
     std::string mode = "omp";              // omp | mpi | serial
     std::string method = "baseline";       // baseline | avx2 | mpi | mpi+avx2
-    std::string attention = "standard";     // standard | streaming
+
+    // New naming convention (preferred)
+    std::string parallel_strategy = "headwise";  // headwise | sequence
+    std::string attention_algo = "standard";     // standard | online_softmax
+
+    // Legacy (for backward compatibility)
+    std::string attention = "standard";     // standard | streaming (deprecated)
 
     int prompt_len = 128;                  // prompt长度 (prefill阶段)
     int gen_len = 100;                     // 生成长度 (decode阶段)
@@ -67,22 +73,30 @@ struct BenchmarkConfig {
 void print_usage(const char* prog) {
     std::cout << "用法: " << prog << " [选项]\n"
               << "选项:\n"
-              << "  --model PATH          模型文件路径\n"
-              << "  --phase PHASE         测试阶段: prefill(预填充) 或 decode(解码) [默认: prefill]\n"
-              << "  --mode MODE           并行模式: omp, mpi, serial [默认: omp]\n"
-              << "  --method METHOD       优化方法: baseline, avx2, mpi, mpi+avx2 [默认: baseline]\n"
-              << "  --attention TYPE      attention类型: standard(标准) 或 streaming(流式) [默认: standard]\n"
-              << "  --prompt-len N        prompt长度 [默认: 128]\n"
-              << "  --gen-len N           生成长度 [默认: 100]\n"
-              << "  --iters N             迭代次数 [默认: 10]\n"
-              << "  --threads N           OpenMP线程数 [默认: 16]\n"
-              << "  --warmup N            预热次数 [默认: 2]\n"
-              << "  --use-kv-cache        decode阶段使用KV cache\n"
-              << "  --no-kv-cache         decode阶段不使用KV cache\n"
-              << "  --compare-kv-cache    对比所有方法的KV cache加速效果\n"
-              << "  --verify [TOKENS]     验证模式：检查输出正确性 (可选指定tokens，否则使用默认值)\n"
-              << "  --verbose             输出详细信息\n"
-              << "  --help                显示帮助信息\n";
+              << "  --model PATH              模型文件路径\n"
+              << "  --phase PHASE             测试阶段: prefill(预填充) 或 decode(解码) [默认: prefill]\n"
+              << "  --mode MODE               并行模式: omp, mpi, serial [默认: omp]\n"
+              << "  --method METHOD           优化方法: baseline, avx2, mpi, mpi+avx2 [默认: baseline]\n"
+              << "\n"
+              << "新的命名约定 (推荐):\n"
+              << "  --parallel-strategy S     并行策略: headwise(按头) 或 sequence(按序列) [默认: headwise]\n"
+              << "  --attention-algo A        attention算法: standard 或 online_softmax [默认: standard]\n"
+              << "\n"
+              << "旧选项 (向后兼容, 已弃用):\n"
+              << "  --attention TYPE          attention类型: standard 或 streaming [默认: standard]\n"
+              << "                            映射: standard→headwise+standard, streaming→headwise+online_softmax\n"
+              << "\n"
+              << "  --prompt-len N            prompt长度 [默认: 128]\n"
+              << "  --gen-len N               生成长度 [默认: 100]\n"
+              << "  --iters N                 迭代次数 [默认: 10]\n"
+              << "  --threads N               OpenMP线程数 [默认: 16]\n"
+              << "  --warmup N                预热次数 [默认: 2]\n"
+              << "  --use-kv-cache            decode阶段使用KV cache\n"
+              << "  --no-kv-cache             decode阶段不使用KV cache\n"
+              << "  --compare-kv-cache        对比所有方法的KV cache加速效果\n"
+              << "  --verify [TOKENS]         验证模式：检查输出正确性 (可选指定tokens，否则使用默认值)\n"
+              << "  --verbose                 输出详细信息\n"
+              << "  --help                    显示帮助信息\n";
 }
 
 BenchmarkConfig parse_args(int argc, char** argv) {
@@ -97,7 +111,12 @@ BenchmarkConfig parse_args(int argc, char** argv) {
             cfg.mode = argv[++i];
         } else if (strcmp(argv[i], "--method") == 0 && i + 1 < argc) {
             cfg.method = argv[++i];
+        } else if (strcmp(argv[i], "--parallel-strategy") == 0 && i + 1 < argc) {
+            cfg.parallel_strategy = argv[++i];
+        } else if (strcmp(argv[i], "--attention-algo") == 0 && i + 1 < argc) {
+            cfg.attention_algo = argv[++i];
         } else if (strcmp(argv[i], "--attention") == 0 && i + 1 < argc) {
+            // Legacy option (deprecated)
             cfg.attention = argv[++i];
         } else if (strcmp(argv[i], "--prompt-len") == 0 && i + 1 < argc) {
             cfg.prompt_len = std::atoi(argv[++i]);
@@ -159,6 +178,26 @@ BenchmarkConfig parse_args(int argc, char** argv) {
         }
     }
 
+    // Backward compatibility: map legacy --attention to new options
+    // If user used legacy --attention option, override the new options
+    if (cfg.attention == "streaming") {
+        // Map legacy "streaming" to HEAD_WISE + ONLINE_SOFTMAX
+        cfg.parallel_strategy = "headwise";
+        cfg.attention_algo = "online_softmax";
+        if (cfg.verbose) {
+            std::cout << "注意: --attention streaming 已弃用\n";
+            std::cout << "      映射到: --parallel-strategy headwise --attention-algo online_softmax\n";
+        }
+    } else if (cfg.attention == "standard") {
+        // Map legacy "standard" to HEAD_WISE + STANDARD
+        cfg.parallel_strategy = "headwise";
+        cfg.attention_algo = "standard";
+        if (cfg.verbose && cfg.attention != "standard") {  // Only warn if explicitly set
+            std::cout << "注意: --attention standard 已弃用\n";
+            std::cout << "      映射到: --parallel-strategy headwise --attention-algo standard\n";
+        }
+    }
+
     return cfg;
 }
 
@@ -191,11 +230,23 @@ Tensor forward_with_method(
     KVCache* kv_cache,
     const Qwen3Weights& weights,
     const std::string& method,
-    const std::string& attention
+    const std::string& parallel_strategy,
+    const std::string& attention_algo
 ) {
-    // Determine attention type
+    // Parse parallel strategy and algorithm
+    mpi::ParallelStrategy strategy = mpi::ParallelStrategy::HEAD_WISE;
+    if (parallel_strategy == "sequence") {
+        strategy = mpi::ParallelStrategy::SEQUENCE;
+    }
+
+    mpi::AttentionAlgorithm algorithm = mpi::AttentionAlgorithm::STANDARD;
+    if (attention_algo == "online_softmax") {
+        algorithm = mpi::AttentionAlgorithm::ONLINE_SOFTMAX;
+    }
+
+    // For baseline/avx2 methods, use legacy API
     qwen3::AttentionType attention_type = qwen3::AttentionType::STANDARD;
-    if (attention == "streaming") {
+    if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
         attention_type = qwen3::AttentionType::STREAMING;
     }
 
@@ -232,13 +283,13 @@ Tensor forward_with_method(
             );
         }
     } else if (method == "mpi") {
-        // Convert standard attention type to MPI attention type
-        mpi::MPIAttentionType mpi_attention_type = mpi::MPIAttentionType::STANDARD;
-        if (attention_type == qwen3::AttentionType::STREAMING) {
-            mpi_attention_type = mpi::MPIAttentionType::STREAMING;
-        }
-
+        // Use new API with separated strategy and algorithm
         if (kv_cache) {
+            // KV cache mode still uses legacy API for now
+            mpi::MPIAttentionType mpi_attention_type = mpi::MPIAttentionType::STANDARD;
+            if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
+                mpi_attention_type = mpi::MPIAttentionType::STREAMING;
+            }
             return mpi::qwen3_forward_mpi_omp_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
@@ -246,21 +297,22 @@ Tensor forward_with_method(
                 weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_attention_type
             );
         } else {
+            // Prefill mode uses new API
             return mpi::qwen3_forward_mpi_omp(
                 input_ids, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_attention_type
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, strategy, algorithm
             );
         }
     } else if (method == "mpi+avx2") {
-        // Convert standard attention type to MPI+AVX attention type
-        mpi_avx::MPIAttentionType mpi_avx_attention_type = mpi_avx::MPIAttentionType::STANDARD;
-        if (attention_type == qwen3::AttentionType::STREAMING) {
-            mpi_avx_attention_type = mpi_avx::MPIAttentionType::STREAMING;
-        }
-
+        // Use new API with separated strategy and algorithm
         if (kv_cache) {
+            // KV cache mode still uses legacy API for now
+            mpi_avx::MPIAttentionType mpi_avx_attention_type = mpi_avx::MPIAttentionType::STANDARD;
+            if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
+                mpi_avx_attention_type = mpi_avx::MPIAttentionType::STREAMING;
+            }
             return mpi_avx::qwen3_forward_mpi_avx_with_cache(
                 input_ids, kv_cache, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
@@ -268,6 +320,12 @@ Tensor forward_with_method(
                 weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_avx_attention_type
             );
         } else {
+            // Prefill mode uses new API - call layer by layer (not implemented at top level yet)
+            // For now, fall back to legacy API
+            mpi_avx::MPIAttentionType mpi_avx_attention_type = mpi_avx::MPIAttentionType::STANDARD;
+            if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
+                mpi_avx_attention_type = mpi_avx::MPIAttentionType::STREAMING;
+            }
             return mpi_avx::qwen3_forward_mpi_avx(
                 input_ids, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
@@ -287,14 +345,14 @@ double benchmark_prefill(const BenchmarkConfig& cfg, const Qwen3Weights& weights
 
     // 预热
     for (int i = 0; i < cfg.warmup; ++i) {
-        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
     }
 
     // 正式测试
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < cfg.iters; ++i) {
-        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -319,7 +377,7 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
     Shape prompt_shape({1, static_cast<long>(prompt_ids.size())});
     TensorL prompt_input(prompt_ids, prompt_shape);
 
-    Tensor prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.attention);
+    Tensor prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
     // 获取第一个预测token
     size_t hidden_size = weights.hidden_size;
@@ -354,13 +412,13 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
         Shape new_shape({1, 1});
         TensorL new_input(new_token, new_shape);
 
-        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
     }
 
     // 重置cache
     kv_cache->reset();
     // 重新prefill
-    prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.attention);
+    prefill_output = forward_with_method(prompt_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
     // 重新获取next_token
     for (size_t v = 0; v < vocab_size; ++v) {
         float sum = 0.0f;
@@ -386,7 +444,7 @@ double benchmark_decode_with_cache(const BenchmarkConfig& cfg, const Qwen3Weight
         Shape new_shape({1, 1});
         TensorL new_input(new_token, new_shape);
 
-        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(new_input, kv_cache.get(), weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
         // 获取next token
         for (size_t i = 0; i < hidden_size; ++i) {
@@ -425,7 +483,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
     TensorL prompt_input(prompt_ids, prompt_shape);
 
     // 初始forward pass获取第一个token
-    Tensor prefill_output = forward_with_method(prompt_input, nullptr, weights, cfg.method, cfg.attention);
+    Tensor prefill_output = forward_with_method(prompt_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
     // 获取第一个预测token
     size_t hidden_size = weights.hidden_size;
@@ -461,7 +519,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
     for (int i = 0; i < cfg.warmup; ++i) {
         Shape new_shape({1, static_cast<long>(prompt_ids.size())});
         TensorL new_input(prompt_ids, new_shape);
-        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
         // 获取next token
         for (size_t j = 0; j < hidden_size; ++j) {
@@ -498,7 +556,7 @@ double benchmark_decode_without_cache(const BenchmarkConfig& cfg, const Qwen3Wei
         Shape new_shape({1, static_cast<long>(prompt_ids.size())});
         TensorL new_input(prompt_ids, new_shape);
 
-        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.attention);
+        Tensor output = forward_with_method(new_input, nullptr, weights, cfg.method, cfg.parallel_strategy, cfg.attention_algo);
 
         // 获取next token
         for (size_t j = 0; j < hidden_size; ++j) {
@@ -776,7 +834,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
     std::cout << "WITHOUT KV CACHE:\n";
     for (const auto& method : methods) {
         std::cout << "  " << get_method_name(method) << "... ";
-        Tensor output = forward_with_method(input, nullptr, weights, method, cfg.attention);
+        Tensor output = forward_with_method(input, nullptr, weights, method, cfg.parallel_strategy, cfg.attention_algo);
         outputs_without_cache.push_back({method, output});
         std::cout << "Done (output size: " << output.size() << ")\n";
     }
@@ -787,7 +845,7 @@ void verify_outputs(const BenchmarkConfig& cfg, const Qwen3Weights& weights) {
         std::cout << "  " << get_method_name(method) << "... ";
         auto kv_cache = std::make_unique<KVCache>(
             weights.num_layers, 1, weights.num_key_value_heads, weights.head_dim, 4096);
-        Tensor output = forward_with_method(input, kv_cache.get(), weights, method, cfg.attention);
+        Tensor output = forward_with_method(input, kv_cache.get(), weights, method, cfg.parallel_strategy, cfg.attention_algo);
         outputs_with_cache.push_back({method, output});
         std::cout << "Done (output size: " << output.size() << ")\n";
     }

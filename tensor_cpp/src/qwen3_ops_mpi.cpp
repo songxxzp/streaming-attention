@@ -340,6 +340,55 @@ Tensor qwen3_decoder_layer_mpi_omp(
     return hidden;
 }
 
+// New overload with separated parallel strategy and algorithm
+Tensor qwen3_decoder_layer_mpi_omp(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+) {
+    // Input layernorm
+    Tensor residual = hidden_states;
+    Tensor hidden = rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
+
+    // Self-attention with MPI using new API
+    Tensor attn_output = qwen3_attention_mpi_omp(
+        hidden, num_attention_heads, num_key_value_heads, head_dim,
+        qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm,
+        strategy, algorithm
+    );
+
+    // Residual connection
+    hidden = residual + attn_output;
+
+    // Post-attention layernorm
+    residual = hidden;
+    hidden = rms_norm(hidden, &post_attention_layernorm_weight, rms_norm_eps);
+
+    // MLP with MPI
+    Tensor mlp_output = qwen3_mlp_mpi_omp(hidden, gate_mlp, up_mlp, down_mlp, comm);
+
+    // Residual connection
+    hidden = residual + mlp_output;
+
+    return hidden;
+}
+
 // ============================================================================
 // Complete Qwen3 Forward Pass with MPI+OpenMP
 // ============================================================================
@@ -394,6 +443,87 @@ Tensor qwen3_forward_mpi_omp(
             sin,
             comm,
             attention_type
+        );
+    }
+
+    // Final layernorm
+    Tensor hidden_normed = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
+
+    // LM head projection to get logits
+    size_t batch_size = input_ids.shape()[0];
+    size_t hidden_size = hidden_states.shape()[2];
+    size_t vocab_size = lm_head.shape()[0];
+    size_t num_samples = batch_size * seq_len;
+
+    std::vector<float> logits_data(num_samples * vocab_size);
+
+    #pragma omp parallel for if(num_samples * vocab_size > 1000)
+    for (size_t s = 0; s < num_samples; ++s) {
+        for (size_t v = 0; v < vocab_size; ++v) {
+            float sum = 0.0f;
+            for (size_t h = 0; h < hidden_size; ++h) {
+                sum += hidden_normed.data()[s * hidden_size + h] * lm_head.data()[v * hidden_size + h];
+            }
+            logits_data[s * vocab_size + v] = sum;
+        }
+    }
+
+    return Tensor(std::move(logits_data), Shape({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(vocab_size)}));
+}
+
+// New overload with separated parallel strategy and algorithm
+Tensor qwen3_forward_mpi_omp(
+    const TensorL& input_ids,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    const Tensor& lm_head,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+) {
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Embed tokens
+    Tensor hidden_states = embedding(input_ids, token_embedding);
+
+    // Compute RoPE frequencies (all ranks compute the same)
+    size_t seq_len = input_ids.shape()[1];
+    auto rope_freqs = compute_rope_freqs(seq_len, head_dim);
+    Tensor cos = rope_freqs.first;
+    Tensor sin = rope_freqs.second;
+
+    // Process through decoder layers using new API
+    for (size_t layer_idx = 0; layer_idx < num_layers; ++layer_idx) {
+        const auto& layer = layers[layer_idx];
+
+        hidden_states = qwen3_decoder_layer_mpi_omp(
+            hidden_states,
+            num_attention_heads,
+            num_key_value_heads,
+            head_dim,
+            rms_norm_eps,
+            layer.input_layernorm_weight,
+            layer.qkv_projs,
+            layer.o_proj,
+            layer.q_norm_weight,
+            layer.k_norm_weight,
+            layer.post_attention_layernorm_weight,
+            layer.gate_proj,
+            layer.up_proj,
+            layer.down_proj,
+            cos,
+            sin,
+            comm,
+            strategy,
+            algorithm
         );
     }
 

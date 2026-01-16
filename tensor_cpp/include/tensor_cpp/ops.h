@@ -299,6 +299,34 @@ Tensor self_attention_streaming_blockwise_avx2(
     int q_block_size = 32,
     int kv_block_size = 64
 );
+
+/**
+ * Cache-optimized Block-wise Streaming Attention (AVX2)
+ *
+ * OPTIMIZATION 2: Uses KV blocks in outer loop for better L2/L3 cache utilization
+ * Similar to FlashAttention's tiling strategy on CPU.
+ *
+ * Additional optimizations compared to base AVX2 version:
+ * - KV blocks are processed in outer loop, reused by multiple queries
+ * - Better cache locality for K/V tensors
+ * - Reduced memory bandwidth requirements
+ *
+ * @param query   (batch, num_heads, q_seq_len, head_dim)
+ * @param key     (batch, num_heads, kv_seq_len, head_dim)
+ * @param value   (batch, num_heads, kv_seq_len, head_dim)
+ * @param scale   Scaling factor (typically 1/sqrt(head_dim))
+ * @param q_block_size Size of query blocks
+ * @param kv_block_size Size of key/value blocks
+ * @return        (batch, num_heads, q_seq_len, head_dim)
+ */
+Tensor self_attention_streaming_blockwise_avx2_cache_optimized(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    float scale = 1.0f,
+    int q_block_size = 32,
+    int kv_block_size = 64
+);
 #endif
 
 // ============================================================================

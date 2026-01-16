@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# 并行计算课程完整实验脚本
+# 课程完整实验脚本
 # ============================================================================
 # 测试内容：
 # 1. Attention算子性能扩展性测试（串行、OpenMP、MPI+OpenMP）
@@ -25,7 +25,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 find_model_path() {
     POSSIBLE_PATHS=(
         "/student/2025310707/Qwen3-0.6B/model.safetensors"
-        "/media/song/LocalDisk/Weblearning/并行计算/final/models/Qwen3-0.6B/model.safetensors"
+        "/media/song/LocalDisk/Weblearning//final/models/Qwen3-0.6B/model.safetensors"
         "/home/$(whoami)/checkpoints/Qwen3-0.6B/model.safetensors"
         "~/checkpoints/Qwen3-0.6B/model.safetensors"
         "./models/Qwen3-0.6B/model.safetensors"
@@ -64,7 +64,7 @@ export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 cat > "$RESULTS_DIR/experiment_design.txt" << 'EOF'
 =============================================================================
-并行计算课程实验设计
+课程实验设计
 =============================================================================
 
 实验1: Attention算子性能扩展性测试
@@ -123,7 +123,7 @@ echo "✓ 实验设计已保存: $RESULTS_DIR/experiment_design.txt"
 
 echo ""
 echo "============================================================================="
-echo "  并行计算课程完整实验"
+echo "  课程完整实验"
 echo "============================================================================="
 echo ""
 echo "开始时间: $(date)"
@@ -384,7 +384,7 @@ echo "==========================================================================
 echo ""
 
 cat > "$RESULTS_DIR/SUMMARY.md" << EOF
-# 并行计算课程实验总结报告
+# 课程实验总结报告
 
 **实验时间**: $(date)
 **实验者**: $(whoami)@$(hostname)

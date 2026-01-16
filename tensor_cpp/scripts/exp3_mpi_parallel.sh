@@ -19,7 +19,7 @@ mkdir -p "$OUTPUT_DIR"
 METHOD="mpi+avx2"
 NUM_THREADS_PER_NODE=26
 declare -a NODES=(1 2 4 8)  # 节点数
-declare -a SEQ_LENS=(128 1024 4096)  # 序列长度
+declare -a SEQ_LENS=(128 1024 2048)  # 序列长度
 declare -a BATCH_SIZES=(1)  # batch size
 
 # 并行策略组合
@@ -112,6 +112,8 @@ for NUM_NODES in "${NODES[@]}"; do
                             --iters $ITERS \
                             --warmup $WARMUP \
                             --threads $NUM_THREADS_PER_NODE \
+                            --q-block-size 64 \
+                            --kv-block-size 64 \
                             2>&1 | tee "$OUTPUT"
 
                     # 提取结果

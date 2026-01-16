@@ -988,7 +988,6 @@ Streaming attention通过避免显式materialize注意力得分矩阵，实现�
    - 稀疏Attention
    - 量化优化（FP16/INT8）
 
-
 ### 5.4 核心结论
 
 本工作的主要贡献和结论如下：
@@ -1095,9 +1094,3 @@ python3 compare_attention_full.py \
 - GitHub: https://github.com/songxxzp/streaming-attention
 
 **实验日期**：2026年1月11日
-
----
-
-**作者声明**
-
-本文为并行计算课程期末作业，所有实验数据和结论均基于真实测试结果。

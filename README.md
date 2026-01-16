@@ -116,13 +116,10 @@ mpirun -np 2 ./benchmark_qwen3 \
 ### Attention 算子性能对比
 
 ```bash
+# 方式1: 在 attention/ 目录编译和运行
 cd attention
-
-# 编译所有测试程序
-make
-
-# 或使用项目根目录的编译脚本
-bash ../scripts/compile_attention.sh
+make                    # 编译串行和 OpenMP 版本
+make mpi                # 编译 MPI 版本 (可选)
 
 # 运行完整性能对比测试
 python scripts/compare_attention_full.py \
@@ -130,23 +127,46 @@ python scripts/compare_attention_full.py \
   --hidden-dim 128 \
   --threads 1 2 4 8 \
   --block-sizes 64 128
+
+# 方式2: 从项目根目录运行
+cd /path/to/final
+python attention/scripts/compare_attention_full.py --help
+
+# 快速测试
+python attention/scripts/compare_attention_full.py \
+  --seqlen 512 --dim 64 --threads 1 --repeat 2
 ```
+
+**Makefile 目标**:
+- `make` 或 `make all` - 编译串行和 OpenMP 版本
+- `make serial` - 仅编译串行版本
+- `make openmp` - 仅编译 OpenMP 版本
+- `make mpi` - 编译 MPI 版本 (需要 mpicxx)
+- `make clean` - 清理编译产物
+- `make help` - 显示帮助信息
 
 **测试项目**:
 - PyTorch `F.scaled_dot_product_attention` (baseline)
-- C++ Naive Attention (串行 / OpenMP)
-- C++ Streaming Attention (串行 / OpenMP)
-- C++ Streaming Attention + MPI (多节点并行)
+- C++ Naive Attention (串行 / OpenMP / MPI)
+- C++ Streaming Attention (串行 / OpenMP / MPI)
 
 **输出**:
 - 各实现的延迟和吞吐量对比
 - 加速比分析
 - 通信开销统计 (MPI版本)
 
-**注意**: `compare_attention_full.py` 支持从任意位置运行：
+**路径自动检测**: `compare_attention_full.py` 支持从任意位置运行：
 - 项目根目录 → 自动使用 `./attention/` 路径
 - `attention/` 目录 → 自动使用当前目录
 - `attention/scripts/` 目录 → 自动使用 `..` 路径
+
+**运行单个测试**:
+```bash
+cd attention
+./test_naive 1024 128 64              # Naive 串行
+OMP_NUM_THREADS=4 ./test_naive_omp 1024 128 64  # Naive OpenMP
+mpirun -np 2 ./test_naive_mpi 1024 128 4       # Naive MPI
+```
 
 ### Qwen3 性能实验脚本
 

@@ -361,6 +361,78 @@ Tensor qwen3_forward_mpi_omp_with_cache(
     MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
+/**
+ * @brief True sequence parallel attention (NO Allgather in QKV projection)
+ *
+ * This is the CORRECT implementation of sequence parallelism:
+ * - Input/Output are DISTRIBUTED across sequence dimension
+ * - No Allgather in QKV projection
+ * - No redundant computation
+ * - Each rank computes only its local sequence positions
+ *
+ * @param hidden_states Input [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param qkv_projs Combined QKV projection weights
+ * @param o_proj Output projection weight
+ * @param q_norm_weight Q normalization weight
+ * @param k_norm_weight K normalization weight
+ * @param cos RoPE cosine [local_seq_len, head_dim/2] - DISTRIBUTED
+ * @param sin RoPE sine [local_seq_len, head_dim/2] - DISTRIBUTED
+ * @param comm MPI communicator
+ * @return Output [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ */
+Tensor qwen3_attention_true_sequence_parallel(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
+/**
+ * @brief Complete forward pass with TRUE sequence parallelism
+ *
+ * This implements correct sequence parallelism without redundant computation:
+ * - Sequence dimension stays distributed throughout
+ * - NO Allgather in embedding or QKV projection
+ * - Each rank computes only its local sequence positions
+ * - Final Allgather happens only once at the very end
+ *
+ * @param input_ids Input token IDs [batch_size, seq_len]
+ * @param token_embedding Word embedding weight
+ * @param layers List of decoder layer weights
+ * @param norm_weight Final layer norm weight
+ * @param lm_head LM head projection weight
+ * @param num_layers Number of layers
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param rms_norm_eps RMS norm epsilon
+ * @param comm MPI communicator
+ * @return Hidden states [batch_size, seq_len, hidden_size]
+ */
+Tensor qwen3_forward_true_sequence_parallel(
+    const TensorL& input_ids,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    const Tensor& lm_head,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
 #endif // MPI_VERSION
 
 } // namespace mpi

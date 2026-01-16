@@ -368,6 +368,50 @@ Tensor linear_mpi_omp(
     MPI_Comm comm = MPI_COMM_WORLD
 );
 
+// AVX2-optimized linear layer
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __AVX2__
+/**
+ * @brief MPI+OpenMP parallelized linear layer with AVX2 optimization
+ *
+ * Same communication pattern as linear_mpi_omp, but uses AVX2 SIMD for matrix multiplication.
+ * Distributes output features across ranks and Allgathers results.
+ *
+ * @param input Input tensor [seq_len, in_features]
+ * @param weight Weight tensor [out_features, in_features]
+ * @param bias Optional bias [out_features]
+ * @param comm MPI communicator
+ * @return Output tensor [seq_len, out_features]
+ */
+Tensor linear_mpi_omp_avx2(
+    const Tensor& input,
+    const Tensor& weight,
+    const Tensor* bias = nullptr,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+    #endif
+#endif
+
+/**
+ * @brief MPI+OpenMP parallelized linear layer WITHOUT Allgather (for sequence parallelism)
+ *
+ * Unlike linear_mpi_omp, this keeps the output distributed across ranks.
+ * Each rank computes only its local portion of output features.
+ * Used in sequence parallelism to maintain sequence dimension distribution.
+ *
+ * @param input Input tensor [seq_len, in_features]
+ * @param weight Weight tensor [out_features, in_features]
+ * @param bias Optional bias [out_features]
+ * @param comm MPI communicator
+ * @return Output tensor [seq_len, local_out_features] - DISTRIBUTED
+ */
+Tensor linear_mpi_omp_no_allgather(
+    const Tensor& input,
+    const Tensor& weight,
+    const Tensor* bias = nullptr,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
 /**
  * @brief MPI+OpenMP parallelized embedding lookup
  *
@@ -378,6 +422,25 @@ Tensor linear_mpi_omp(
  * @return Embedded tensor [batch, seq_len, hidden_size]
  */
 Tensor embedding_mpi_omp(
+    const TensorL& indices,
+    const Tensor& weight,
+    long padding_idx = -1,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
+/**
+ * @brief Embedding layer WITHOUT Allgather (for true sequence parallelism)
+ *
+ * Distributes sequence positions across ranks and KEEPS them distributed.
+ * Each rank computes embedding for its local sequence positions only.
+ *
+ * @param indices Token indices [batch, seq_len]
+ * @param weight Embedding matrix [vocab_size, hidden_size]
+ * @param padding_idx Padding index
+ * @param comm MPI communicator
+ * @return Embedded tensor [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ */
+Tensor embedding_mpi_omp_no_allgather(
     const TensorL& indices,
     const Tensor& weight,
     long padding_idx = -1,

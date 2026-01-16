@@ -251,6 +251,164 @@ Tensor qwen3_forward_mpi_avx_with_cache(
     MPIAttentionType attention_type = MPIAttentionType::STANDARD
 );
 
+/**
+ * @brief MPI+AVX2 decoder layer with configurable parallel strategy and algorithm
+ *
+ * @param hidden_states Input [batch, seq_len, hidden_size]
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param rms_norm_eps RMS norm epsilon
+ * @param input_layernorm_weight Input layer norm weight
+ * @param qkv_projs Combined QKV projection weights
+ * @param o_proj Output projection weight
+ * @param q_norm_weight Q normalization weight
+ * @param k_norm_weight K normalization weight
+ * @param post_attention_layernorm_weight Post attention layer norm weight
+ * @param gate_mlp MLP gate projection weight
+ * @param up_mlp MLP up projection weight
+ * @param down_mlp MLP down projection weight
+ * @param cos RoPE cosine values
+ * @param sin RoPE sine values
+ * @param comm MPI communicator
+ * @param strategy Parallel strategy (HEAD_WISE or SEQUENCE)
+ * @param algorithm Attention algorithm (STANDARD or ONLINE_SOFTMAX)
+ * @return Output tensor [batch, seq_len, hidden_size]
+ */
+Tensor qwen3_decoder_layer_mpi_avx(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    const Tensor& input_layernorm_weight,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& post_attention_layernorm_weight,
+    const Tensor& gate_mlp,
+    const Tensor& up_mlp,
+    const Tensor& down_mlp,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+);
+
+/**
+ * @brief Complete Qwen3 forward pass with MPI+AVX2 and configurable strategy
+ *
+ * @param input_ids Input token IDs [batch_size, seq_len]
+ * @param token_embedding Word embedding weight
+ * @param layers List of decoder layer weights
+ * @param norm_weight Final layer norm weight
+ * @param lm_head LM head projection weight
+ * @param num_layers Number of layers
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param rms_norm_eps RMS norm epsilon
+ * @param comm MPI communicator
+ * @param strategy Parallel strategy (HEAD_WISE or SEQUENCE)
+ * @param algorithm Attention algorithm (STANDARD or ONLINE_SOFTMAX)
+ * @return Hidden states [batch_size, seq_len, hidden_size]
+ */
+Tensor qwen3_forward_mpi_avx(
+    const TensorL& input_ids,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    const Tensor& lm_head,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+);
+
+// ============================================================================
+// True Sequence Parallel with AVX2 Optimization
+// ============================================================================
+
+/**
+ * @brief True sequence parallel attention with AVX2 optimization (NO Allgather in QKV)
+ *
+ * This is the CORRECT implementation of sequence parallelism with AVX2:
+ * - Input/Output are DISTRIBUTED across sequence dimension
+ * - No Allgather in QKV projection
+ * - No redundant computation
+ * - Each rank computes only its local sequence positions
+ * - Uses AVX2 SIMD for computation
+ *
+ * @param hidden_states Input [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param qkv_projs Combined QKV projection weights
+ * @param o_proj Output projection weight
+ * @param q_norm_weight Q normalization weight
+ * @param k_norm_weight K normalization weight
+ * @param cos RoPE cosine [local_seq_len, head_dim/2] - DISTRIBUTED
+ * @param sin RoPE sine [local_seq_len, head_dim/2] - DISTRIBUTED
+ * @param comm MPI communicator
+ * @return Output [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ */
+Tensor qwen3_attention_true_sequence_parallel_avx2(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
+/**
+ * @brief Complete forward pass with TRUE sequence parallelism and AVX2
+ *
+ * This implements correct sequence parallelism with AVX2 optimization:
+ * - Sequence dimension stays distributed throughout
+ * - NO Allgather in embedding or QKV projection
+ * - Each rank computes only its local sequence positions
+ * - Uses AVX2 SIMD for all computations
+ * - Final Allgather happens only once at the very end
+ *
+ * @param input_ids Input token IDs [batch_size, seq_len]
+ * @param token_embedding Word embedding weight
+ * @param layers List of decoder layer weights
+ * @param norm_weight Final layer norm weight
+ * @param lm_head LM head projection weight
+ * @param num_layers Number of layers
+ * @param num_attention_heads Number of attention heads
+ * @param num_key_value_heads Number of KV heads
+ * @param head_dim Head dimension
+ * @param rms_norm_eps RMS norm epsilon
+ * @param comm MPI communicator
+ * @return Hidden states [batch_size, seq_len, hidden_size]
+ */
+Tensor qwen3_forward_true_sequence_parallel_avx2(
+    const TensorL& input_ids,
+    const Tensor& token_embedding,
+    const std::vector<Qwen3LayerWeights>& layers,
+    const Tensor& norm_weight,
+    const Tensor& lm_head,
+    size_t num_layers,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    float rms_norm_eps,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+
 #endif // MPI_VERSION
 
 } // namespace mpi_avx

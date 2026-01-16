@@ -354,17 +354,23 @@ Tensor forward_with_method(
                 weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_avx_attention_type
             );
         } else {
-            // Prefill mode uses new API - call layer by layer (not implemented at top level yet)
-            // For now, fall back to legacy API
-            mpi_avx::MPIAttentionType mpi_avx_attention_type = mpi_avx::MPIAttentionType::STANDARD;
-            if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
-                mpi_avx_attention_type = mpi_avx::MPIAttentionType::STREAMING;
+            // Prefill mode uses new API with separated strategy and algorithm
+            // Convert mpi enums to mpi_avx enums
+            mpi_avx::ParallelStrategy avx_strategy = mpi_avx::ParallelStrategy::HEAD_WISE;
+            if (strategy == mpi::ParallelStrategy::SEQUENCE) {
+                avx_strategy = mpi_avx::ParallelStrategy::SEQUENCE;
             }
+
+            mpi_avx::AttentionAlgorithm avx_algorithm = mpi_avx::AttentionAlgorithm::STANDARD;
+            if (algorithm == mpi::AttentionAlgorithm::ONLINE_SOFTMAX) {
+                avx_algorithm = mpi_avx::AttentionAlgorithm::ONLINE_SOFTMAX;
+            }
+
             return mpi_avx::qwen3_forward_mpi_avx(
                 input_ids, weights.embed_tokens, weights.layers,
                 weights.norm_weight, weights.lm_head, weights.num_layers,
                 weights.num_attention_heads, weights.num_key_value_heads,
-                weights.head_dim, 1e-6f, MPI_COMM_WORLD, mpi_avx_attention_type
+                weights.head_dim, 1e-6f, MPI_COMM_WORLD, avx_strategy, avx_algorithm
             );
         }
     }

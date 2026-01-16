@@ -666,6 +666,159 @@ Tensor linear_mpi_omp(
     return Tensor(std::move(result), result_shape);
 }
 
+/**
+ * @brief MPI+OpenMP parallelized linear layer WITHOUT Allgather (for sequence parallelism)
+ *
+ * Unlike linear_mpi_omp, this function keeps the output distributed across ranks.
+ * Each rank computes only its local portion of output features.
+ * Used in sequence parallelism to maintain sequence dimension distribution.
+ *
+ * @param input Input tensor [seq_len, in_features]
+ * @param weight Weight tensor [out_features, in_features]
+ * @param bias Optional bias [out_features]
+ * @param comm MPI communicator
+ * @return Output tensor [seq_len, local_out_features] - DISTRIBUTED, not gathered
+ */
+#ifdef HAS_AVX2_OPS_MPI
+
+/**
+ * @brief MPI+OpenMP parallelized linear layer with AVX2 optimization
+ *
+ * Same communication pattern as linear_mpi_omp, but uses AVX2 SIMD for matrix multiplication.
+ */
+Tensor linear_mpi_omp_avx2(
+    const Tensor& input,
+    const Tensor& weight,
+    const Tensor* bias,
+    MPI_Comm comm
+) {
+    // input: [seq_len, in_features]
+    // weight: [out_features, in_features]
+    // output: [seq_len, out_features]
+
+    size_t seq_len = input.shape()[0];
+    size_t in_features = input.shape()[1];
+    size_t out_features = weight.shape()[0];
+
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Distribute output features across ranks (same as linear_mpi_omp)
+    int out_per_rank = (out_features + size - 1) / size;
+    int start_out = rank * out_per_rank;
+    int end_out = std::min(start_out + out_per_rank, static_cast<int>(out_features));
+    int local_out = end_out - start_out;
+
+    // Allocate local result
+    std::vector<float> result(seq_len * local_out);
+
+    // Local computation with AVX2 optimization
+    #pragma omp parallel for if(seq_len * local_out > 100)
+    for (size_t s = 0; s < seq_len; ++s) {
+        for (int o = 0; o < local_out; ++o) {
+            float sum = 0.0f;
+            size_t input_row_offset = s * in_features;
+            size_t weight_row_offset = (start_out + o) * in_features;
+
+            // AVX2-optimized dot product
+            size_t i = 0;
+            #ifdef __AVX2__
+            __m256 v_sum = _mm256_setzero_ps();
+            for (; i + 8 <= in_features; i += 8) {
+                __m256 v_input = _mm256_loadu_ps(input.data() + input_row_offset + i);
+                __m256 v_weight = _mm256_loadu_ps(weight.data() + weight_row_offset + i);
+                v_sum = _mm256_fmadd_ps(v_input, v_weight, v_sum);
+            }
+            // Horizontal sum
+            v_sum = _mm256_hadd_ps(v_sum, v_sum);
+            v_sum = _mm256_hadd_ps(v_sum, v_sum);
+            float temp[8];
+            _mm256_storeu_ps(temp, v_sum);
+            sum = temp[0] + temp[4];
+            #endif
+
+            // Handle remaining elements
+            for (; i < in_features; ++i) {
+                sum += input[input_row_offset + i] * weight[weight_row_offset + i];
+            }
+
+            result[s * local_out + o] = sum + (bias ? (*bias)[start_out + o] : 0.0f);
+        }
+    }
+
+    // Gather results (same as linear_mpi_omp)
+    if (size > 1) {
+        std::vector<float> full_result(seq_len * out_features);
+
+        std::vector<int> recvcounts(size);
+        std::vector<int> displs(size);
+
+        for (int i = 0; i < size; ++i) {
+            int s_o = i * out_per_rank;
+            int e_o = std::min(s_o + out_per_rank, static_cast<int>(out_features));
+            recvcounts[i] = seq_len * (e_o - s_o);
+            displs[i] = seq_len * s_o;
+        }
+
+        MPI_Allgatherv(
+            result.data(), result.size(), MPI_FLOAT,
+            full_result.data(), recvcounts.data(), displs.data(), MPI_FLOAT, comm
+        );
+
+        result = std::move(full_result);
+    }
+
+    Shape result_shape({static_cast<long>(seq_len), static_cast<long>(out_features)});
+    return Tensor(std::move(result), result_shape);
+}
+
+#endif // HAS_AVX2_OPS_MPI
+
+Tensor linear_mpi_omp_no_allgather(
+    const Tensor& input,
+    const Tensor& weight,
+    const Tensor* bias,
+    MPI_Comm comm
+) {
+    // input: [seq_len, in_features]
+    // weight: [out_features, in_features]
+    // output: [seq_len, local_out_features] - DISTRIBUTED
+
+    size_t seq_len = input.shape()[0];
+    size_t in_features = input.shape()[1];
+    size_t out_features = weight.shape()[0];
+
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Distribute output features across ranks
+    int out_per_rank = (out_features + size - 1) / size;
+    int start_out = rank * out_per_rank;
+    int end_out = std::min(start_out + out_per_rank, static_cast<int>(out_features));
+    int local_out = end_out - start_out;
+
+    // Local computation - NO ALLGATHER
+    std::vector<float> result(seq_len * local_out);
+
+    #pragma omp parallel for if(seq_len * local_out > 100)
+    for (size_t s = 0; s < seq_len; ++s) {
+        for (int o = 0; o < local_out; ++o) {
+            float sum = 0.0f;
+            #pragma omp simd reduction(+:sum)
+            for (size_t i = 0; i < in_features; ++i) {
+                sum += input[s * in_features + i] * weight[(start_out + o) * in_features + i];
+            }
+            result[s * local_out + o] = sum + (bias ? (*bias)[start_out + o] : 0.0f);
+        }
+    }
+
+    // Return distributed result WITHOUT Allgather
+    Shape result_shape({static_cast<long>(seq_len), static_cast<long>(local_out)});
+    return Tensor(std::move(result), result_shape);
+}
+
 // ============================================================================
 // MPI+OpenMP Embedding Lookup
 // ============================================================================
@@ -739,6 +892,70 @@ Tensor embedding_mpi_omp(
     }
 
     Shape result_shape({static_cast<long>(batch_size), static_cast<long>(seq_len), static_cast<long>(hidden_size)});
+    return Tensor(std::move(result), result_shape);
+}
+
+/**
+ * @brief Embedding layer WITHOUT Allgather (for true sequence parallelism)
+ *
+ * Distributes sequence positions across ranks and KEEPS them distributed.
+ * Each rank computes embedding for its local sequence positions only.
+ * Used for true sequence parallel where sequence dimension stays distributed.
+ *
+ * @param indices Token indices [batch, seq_len]
+ * @param weight Embedding matrix [vocab_size, hidden_size]
+ * @param padding_idx Padding index
+ * @param comm MPI communicator
+ * @return Embedded tensor [batch, local_seq_len, hidden_size] - DISTRIBUTED
+ */
+Tensor embedding_mpi_omp_no_allgather(
+    const TensorL& indices,
+    const Tensor& weight,
+    long padding_idx,
+    MPI_Comm comm
+) {
+    // indices: [batch, seq_len]
+    // weight: [vocab_size, hidden_size]
+    // output: [batch, local_seq_len, hidden_size] - DISTRIBUTED
+
+    size_t batch_size = indices.shape()[0];
+    size_t seq_len = indices.shape()[1];
+    size_t hidden_size = weight.shape()[1];
+
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Distribute sequence positions across ranks
+    int seq_per_rank = (seq_len + size - 1) / size;
+    int start_seq = rank * seq_per_rank;
+    int end_seq = std::min(start_seq + seq_per_rank, static_cast<int>(seq_len));
+    int local_seq = end_seq - start_seq;
+
+    // Allocate only local result size - NO ALLGATHER
+    std::vector<float> result(batch_size * local_seq * hidden_size);
+
+    // Local computation
+    #pragma omp parallel for if(batch_size * local_seq > 10)
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (int s = 0; s < local_seq; ++s) {
+            long token_idx = indices[b * seq_len + (start_seq + s)];
+            if (token_idx == padding_idx) {
+                // Use zero embedding for padding
+                for (size_t h = 0; h < hidden_size; ++h) {
+                    result[(b * local_seq + s) * hidden_size + h] = 0.0f;
+                }
+            } else {
+                for (size_t h = 0; h < hidden_size; ++h) {
+                    result[(b * local_seq + s) * hidden_size + h] =
+                        weight[token_idx * hidden_size + h];
+                }
+            }
+        }
+    }
+
+    // Return DISTRIBUTED result WITHOUT Allgather
+    Shape result_shape({static_cast<long>(batch_size), static_cast<long>(local_seq), static_cast<long>(hidden_size)});
     return Tensor(std::move(result), result_shape);
 }
 

@@ -17,7 +17,7 @@ OUTPUT_DIR="results/exp5_node_scaling"
 mkdir -p "$OUTPUT_DIR"
 
 # 实验配置
-METHOD="avx2"
+METHOD="mpi+avx2"
 declare -a K_VALUES=(1 2 4 8 16)  # 扩展因子
 declare -a SEQ_LENS=(128 1024)     # 序列长度
 declare -a PARALLEL_STRATEGIES=("sequence")
@@ -27,6 +27,7 @@ declare -a ATTENTION_ALGOS=("standard" "online_softmax")
 ITERS=2
 WARMUP=1
 MAX_THREADS=26  # 单机最大线程数
+MAX_NODES=8
 
 echo "============================================================"
 echo "       实验5: 节点扩展性测试 (相同核心数单机vs多机)"
@@ -115,6 +116,11 @@ for K in "${K_VALUES[@]}"; do
         # 检查线程数是否超过限制
         if [[ $THREADS_PER_PROCESS -gt $MAX_THREADS ]]; then
             echo "跳过: k=${K}, ${NUM_NODES}节点×${PROCESSES_PER_NODE}进程×${THREADS_PER_PROCESS}线程 (线程数>${MAX_THREADS})"
+            continue
+        fi
+
+        if [[ $NUM_NODES -gt $MAX_NODES ]]; then
+            echo "跳过: k=${K}, ${NUM_NODES}节点×${PROCESSES_PER_NODE}进程×${THREADS_PER_PROCESS}线程 (节点数>${MAX_NODES})"
             continue
         fi
 

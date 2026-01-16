@@ -24,8 +24,8 @@ declare -a PARALLEL_STRATEGIES=("headwise")  #  "sequence"
 declare -a ATTENTION_ALGOS=("standard")  #  "online_softmax"
 
 # 迭代配置
-ITERS=3
-WARMUP=2
+ITERS=2
+WARMUP=1
 
 echo "============================================================"
 echo "          实验1: 串行Baseline性能测试"

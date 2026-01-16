@@ -15,7 +15,7 @@ OUTPUT_DIR="results/exp2_single_node_16threads"
 mkdir -p "$OUTPUT_DIR"
 
 # 实验配置
-METHOD="avx2"
+METHOD="mpi+avx2"
 NUM_THREADS=26
 declare -a SEQ_LENS=(128 1024)  # 序列长度
 declare -a BATCH_SIZES=(1 8)    # batch大小
@@ -25,8 +25,8 @@ declare -a PARALLEL_STRATEGIES=("sequence")
 declare -a ATTENTION_ALGOS=("standard" "online_softmax")
 
 # 迭代配置
-ITERS=3
-WARMUP=2
+ITERS=2
+WARMUP=1
 
 echo "============================================================"
 echo "       实验2: 单机26线程性能测试"
@@ -64,20 +64,26 @@ for BATCH_SIZE in "${BATCH_SIZES[@]}"; do
                 # 运行benchmark
                 OUTPUT="${OUTPUT_DIR}/batch${BATCH_SIZE}_seq${SEQ_LEN}_${STRATEGY}_${ALGO}.log"
 
-                LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
-                OMP_NUM_THREADS=$NUM_THREADS \
-                $BENCHMARK \
-                    --model "$MODEL_PATH" \
-                    --method "$METHOD" \
-                    --parallel-strategy "$STRATEGY" \
-                    --attention-algo "$ALGO" \
-                    --batch-size $BATCH_SIZE \
-                    --prompt-len $SEQ_LEN \
-                    --phase prefill \
-                    --iters $ITERS \
-                    --warmup $WARMUP \
-                    --threads $NUM_THREADS \
-                    2>&1 | tee "$OUTPUT"
+                srun --mpi=pmix \
+                        -p student \
+                        -N 1 \
+                        --ntasks=1 \
+                        --ntasks-per-node=1 \
+                        --cpus-per-task=$NUM_THREADS \
+                        env OMP_NUM_THREADS=$NUM_THREADS \
+                        LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+                        $BENCHMARK \
+                            --model "$MODEL_PATH" \
+                            --method "$METHOD" \
+                            --parallel-strategy "$STRATEGY" \
+                            --attention-algo "$ALGO" \
+                            --batch-size $BATCH_SIZE \
+                            --prompt-len $SEQ_LEN \
+                            --phase prefill \
+                            --iters $ITERS \
+                            --warmup $WARMUP \
+                            --threads $NUM_THREADS \
+                            2>&1 | tee "$OUTPUT"
 
                 # 提取结果
                 TOTAL_TIME=$(grep "总时间:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')

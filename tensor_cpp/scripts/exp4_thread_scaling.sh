@@ -29,8 +29,8 @@ declare -a PARALLEL_STRATEGIES=("sequence") # "headwise"
 declare -a ATTENTION_ALGOS=("standard" "online_softmax")
 
 # 迭代配置
-ITERS=3
-WARMUP=2
+ITERS=2
+WARMUP=1
 
 echo "============================================================"
 echo "       实验4: OpenMP线程扩展性测试"
@@ -93,20 +93,26 @@ for NUM_THREADS in "${THREADS[@]}"; do
             # 运行benchmark
             OUTPUT="${OUTPUT_DIR}/threads${NUM_THREADS}_${STRATEGY}_${ALGO}.log"
 
-            LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
-            OMP_NUM_THREADS=$NUM_THREADS \
-            $BENCHMARK \
-                --model "$MODEL_PATH" \
-                --method "$METHOD" \
-                --parallel-strategy "$STRATEGY" \
-                --attention-algo "$ALGO" \
-                --batch-size $BATCH_SIZE \
-                --prompt-len $SEQ_LEN \
-                --phase prefill \
-                --iters $ITERS \
-                --warmup $WARMUP \
-                --threads $NUM_THREADS \
-                2>&1 | tee "$OUTPUT"
+            srun --mpi=pmix \
+                    -p student \
+                    -N 1 \
+                    --ntasks=1 \
+                    --ntasks-per-node=1 \
+                    --cpus-per-task=$NUM_THREADS \
+                    env OMP_NUM_THREADS=$NUM_THREADS \
+                    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+                    $BENCHMARK \
+                        --model "$MODEL_PATH" \
+                        --method "$METHOD" \
+                        --parallel-strategy "$STRATEGY" \
+                        --attention-algo "$ALGO" \
+                        --batch-size $BATCH_SIZE \
+                        --prompt-len $SEQ_LEN \
+                        --phase prefill \
+                        --iters $ITERS \
+                        --warmup $WARMUP \
+                        --threads $NUM_THREADS \
+                        2>&1 | tee "$OUTPUT"
 
             # 提取结果
             TOTAL_TIME=$(grep "总时间:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')

@@ -2,8 +2,8 @@
 # 编译所有测试程序
 
 CXX = g++
-MPICXX = mpicxx
-CXXFLAGS = -std=c++17 -O3 -march=native -I.
+MPICXX ?= /usr/bin/mpicxx
+CXXFLAGS = -std=c++17 -O3 -march=native -I. -I$(SRC_DIR) -I../utils
 OPENMP_FLAGS = -fopenmp
 
 # 源文件和目标文件

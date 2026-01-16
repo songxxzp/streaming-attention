@@ -92,5 +92,6 @@ Thumbs.db
 test_data/
 results/
 
-# PDF
+# PDF (except Paper.pdf)
 *.pdf
+!Paper.pdf

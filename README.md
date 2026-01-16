@@ -21,7 +21,7 @@ final/
 │   │   ├── streaming_omp.cpp      # OpenMP 并行实现
 │   │   └── streaming_mpi.cpp      # MPI+OpenMP 混合并行实现
 │   ├── tests/                     # 测试代码
-│   └── scripts/                   # compare_attention_full.py
+│   └── scripts/                   # compare_attention_full.py 性能对比脚本
 │
 ├── tensor_cpp/                    # 🧠 Qwen3 C++ Tensor 库
 │   ├── README.md                  # 详细文档
@@ -37,6 +37,13 @@ final/
 │   ├── src/                       # 源文件实现
 │   ├── tests/benchmark/           # 性能测试
 │   ├── scripts/                   # 实验脚本
+│   │   ├── exp1_serial_baseline.sh
+│   │   ├── exp2_single_node_n_threads.sh
+│   │   ├── exp3_mpi_parallel.sh
+│   │   ├── exp4_thread_scaling.sh
+│   │   ├── exp5_node_scaling.sh
+│   │   ├── exp6_block_size_tuning.sh
+│   │   └── README_EXPERIMENTS.md  # 实验脚本完整文档
 │   └── results/                   # 实验结果
 │
 ├── experiments/                   # 📊 实验数据和可视化
@@ -54,7 +61,7 @@ final/
 - **[MPI 实现对比](docs/MPI_IMPLEMENTATION_COMPARISON.md)** - MPI vs MPI+AVX2 详细对比
 - **[Qwen3 MPI 使用指南](docs/QWEN3_MPI_GUIDE.md)** - MPI 并行配置和运行
 - **[Tensor_cpp README](tensor_cpp/README.md)** - C++ 库详细文档
-- **[实验脚本指南](scripts/EXPERIMENT_GUIDE.md)** - 实验脚本使用说明
+- **[实验脚本指南](tensor_cpp/scripts/README_EXPERIMENTS.md)** - Qwen3 性能实验脚本完整说明
 
 ## 🚀 快速开始
 
@@ -105,6 +112,57 @@ mpirun -np 2 ./benchmark_qwen3 \
   --prompt-len 32 \
   --verify
 ```
+
+### Attention 算子性能对比
+
+```bash
+cd attention
+
+# 编译所有测试程序
+make
+
+# 运行完整性能对比测试
+python scripts/compare_attention_full.py \
+  --seq-lens 1024 8192 \
+  --hidden-dim 128 \
+  --threads 1 2 4 8 \
+  --block-sizes 64 128
+```
+
+**测试项目**:
+- PyTorch `F.scaled_dot_product_attention` (baseline)
+- C++ Naive Attention (串行 / OpenMP)
+- C++ Streaming Attention (串行 / OpenMP)
+- C++ Streaming Attention + MPI (多节点并行)
+
+**输出**:
+- 各实现的延迟和吞吐量对比
+- 加速比分析
+- 通信开销统计 (MPI版本)
+
+### Qwen3 性能实验脚本
+
+```bash
+cd tensor_cpp
+
+# 运行单个实验
+./scripts/exp1_serial_baseline.sh        # 串行baseline
+./scripts/exp2_single_node_n_threads.sh  # 单机多线程
+./scripts/exp3_mpi_parallel.sh           # MPI并行 (集群)
+
+# 运行所有实验
+./scripts/run_all_experiments.sh
+```
+
+**实验系列**:
+1. **exp1_serial_baseline**: 串行 baseline (baseline vs avx2)
+2. **exp2_single_node_n_threads**: 单机多线程扩展性
+3. **exp3_mpi_parallel**: 多节点 MPI 并行 (1/2/4/8 nodes)
+4. **exp4_thread_scaling**: 线程扩展性分析
+5. **exp5_node_scaling**: 节点扩展性分析
+6. **exp6_block_size_tuning**: Block size 调优
+
+详细说明见 [实验脚本完整文档](tensor_cpp/scripts/README_EXPERIMENTS.md)
 
 ## 📊 性能亮点
 

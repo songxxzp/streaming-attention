@@ -1110,7 +1110,7 @@ int main(int argc, char** argv) {
     int num_tokens = 0;
 
     if (cfg.phase == "prefill") {
-        num_tokens = cfg.prompt_len * cfg.iters;
+        num_tokens = cfg.batch_size * cfg.prompt_len * cfg.iters;
 #ifdef USE_MPI
         if (rank == 0) {
 #endif
@@ -1120,7 +1120,7 @@ int main(int argc, char** argv) {
 #endif
         total_time_ms = benchmark_prefill(cfg, weights);
     } else if (cfg.phase == "decode") {
-        num_tokens = cfg.gen_len;
+        num_tokens = cfg.batch_size * cfg.gen_len;
 #ifdef USE_MPI
         if (rank == 0) {
 #endif

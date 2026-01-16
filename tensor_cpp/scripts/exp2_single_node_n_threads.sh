@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-# 实验2: 单机16线程性能测试
+# 实验2: 单机n线程性能测试
 #
 # 目标：评估单机多线程环境下不同序列长度、batch大小和并行策略的性能
 # 配置：batch*len = 1*128 / 8*128 / 1*1024
@@ -11,7 +11,7 @@ set -e  # 遇到错误立即退出
 # 配置
 MODEL_PATH="/student/2025310707/Qwen3-0.6B/model.safetensors"
 BENCHMARK="./build/benchmark_qwen3"
-OUTPUT_DIR="results/exp2_single_node_16threads"
+OUTPUT_DIR="results/exp2_single_node_n_threads"
 mkdir -p "$OUTPUT_DIR"
 
 # 实验配置
@@ -42,7 +42,7 @@ echo "============================================================"
 echo ""
 
 # 结果文件头
-RESULTS_FILE="${OUTPUT_DIR}/single_node_16threads_results.csv"
+RESULTS_FILE="${OUTPUT_DIR}/single_node_n_threads_results.csv"
 echo "batch_size,seq_len,parallel_strategy,attention_algo,total_time_ms,time_per_token_ms,throughput_tok_s,timestamp" > "$RESULTS_FILE"
 
 # 遍历所有batch大小、序列长度和策略组合

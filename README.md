@@ -78,17 +78,32 @@ cd tensor_cpp/build
 cmake ..
 make -j
 
-# 单线程基准测试
-./benchmark_qwen3 --model /path/to/qwen3-0.6b
-
-# MPI 并行推理 (2节点, 序列并行)
-mpirun -np 2 ./benchmark_qwen3 \
-  --model /path/to/qwen3-0.6b \
+# Prefill 阶段基准测试 (处理长提示词)
+./benchmark_qwen3 --model /path/to/qwen3-0.6B/model.safetensors \
   --method mpi+avx2 \
   --parallel-strategy sequence \
   --attention-algo online_softmax \
   --prompt-len 128 \
   --iters 3
+
+# Decode 阶段性能验证 (自回归生成)
+mpirun -np 2 ./benchmark_qwen3 \
+  --model /path/to/qwen3-0.6B/model.safetensors \
+  --method mpi+avx2 \
+  --parallel-strategy sequence \
+  --attention-algo online_softmax \
+  --prompt-len 128 \
+  --generate 100 \
+  --threads 8
+
+# 正确性验证 (与 PyTorch 输出对比)
+mpirun -np 2 ./benchmark_qwen3 \
+  --model /path/to/qwen3-0.6B/model.safetensors \
+  --method mpi+avx2 \
+  --parallel-strategy sequence \
+  --attention-algo online_softmax \
+  --prompt-len 32 \
+  --verify
 ```
 
 ## 📊 性能亮点

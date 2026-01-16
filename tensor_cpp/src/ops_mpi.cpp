@@ -11,6 +11,14 @@
 #include <cmath>
 #include <cstring>
 
+// AVX2 intrinsics
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __AVX2__
+    #include <immintrin.h>
+    #define HAS_AVX2_OPS_MPI
+    #endif
+#endif
+
 namespace tensor_cpp {
 namespace ops {
 namespace mpi {
@@ -985,6 +993,250 @@ Tensor attention_sequence_online_softmax(
                        static_cast<long>(local_q_seq_len), static_cast<long>(head_dim)});
     return Tensor(std::move(result_data), result_shape);
 }
+
+#ifdef HAS_AVX2_OPS_MPI
+
+Tensor attention_sequence_online_softmax_avx2(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    const Tensor* mask,
+    float scale,
+    int num_attention_heads,
+    int num_key_value_heads,
+    size_t global_seq_len,
+    MPI_Comm comm
+) {
+    int rank, size;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // Tensor shapes
+    size_t batch_size = query.shape()[0];
+    size_t local_q_seq_len = query.shape()[2];
+    size_t local_kv_seq_len = key.shape()[2];
+    size_t head_dim = query.shape()[3];
+
+    // Compute GQA repetition factor
+    int n_rep = num_attention_heads / num_key_value_heads;
+
+    // Step 1: 本地 streaming attention 计算 (AVX2优化)
+    size_t num_stats = batch_size * num_attention_heads * local_q_seq_len;
+
+    std::vector<float> local_max(num_stats, -std::numeric_limits<float>::infinity());
+    std::vector<float> local_exp_sum(num_stats, 0.0f);
+    std::vector<float> local_weighted_value(batch_size * num_attention_heads * local_q_seq_len * head_dim, 0.0f);
+
+    const size_t KV_BLOCK_SIZE = 64;
+
+    #pragma omp parallel for if(batch_size * num_attention_heads * local_q_seq_len > 100)
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (int h = 0; h < num_attention_heads; ++h) {
+            int h_kv = h / n_rep;
+
+            for (size_t q_idx = 0; q_idx < local_q_seq_len; ++q_idx) {
+                size_t global_q_pos = rank * local_q_seq_len + q_idx;
+
+                // Extract query vector for this position (AVX2-optimized scale)
+                std::vector<float> q_vec(head_dim);
+                size_t q_base_idx = ((b * num_attention_heads + h) * local_q_seq_len + q_idx) * head_dim;
+
+                // Apply scale with AVX2
+                size_t d = 0;
+                #ifdef __AVX2__
+                __m256 v_scale = _mm256_set1_ps(scale);
+                for (; d + 8 <= head_dim; d += 8) {
+                    __m256 v_q = _mm256_loadu_ps(query.data() + q_base_idx + d);
+                    __m256 v_q_scaled = _mm256_mul_ps(v_q, v_scale);
+                    _mm256_storeu_ps(q_vec.data() + d, v_q_scaled);
+                }
+                #endif
+                for (; d < head_dim; ++d) {
+                    q_vec[d] = query[q_base_idx + d] * scale;
+                }
+
+                // Process KV blocks
+                for (size_t kv_block_start = 0; kv_block_start < local_kv_seq_len; kv_block_start += KV_BLOCK_SIZE) {
+                    size_t kv_block_end = std::min(kv_block_start + KV_BLOCK_SIZE, local_kv_seq_len);
+
+                    // Causal constraint check
+                    bool block_has_valid_positions = false;
+                    for (size_t kv_idx = kv_block_start; kv_idx < kv_block_end; ++kv_idx) {
+                        size_t global_kv_pos = rank * local_kv_seq_len + kv_idx;
+                        if (global_kv_pos <= global_q_pos) {
+                            block_has_valid_positions = true;
+                            break;
+                        }
+                    }
+
+                    if (!block_has_valid_positions) {
+                        continue;
+                    }
+
+                    // Compute attention scores for this query against KV block (AVX2-optimized)
+                    std::vector<float> block_scores(kv_block_end - kv_block_start);
+                    std::vector<float> block_weighted_v((kv_block_end - kv_block_start) * head_dim);
+
+                    for (size_t kv_idx = kv_block_start; kv_idx < kv_block_end; ++kv_idx) {
+                        size_t global_kv_pos = rank * local_kv_seq_len + kv_idx;
+
+                        if (global_kv_pos > global_q_pos) {
+                            continue;
+                        }
+
+                        // AVX2-optimized dot product Q @ K^T
+                        float score = 0.0f;
+                        size_t k_base_idx = ((b * num_key_value_heads + h_kv) * local_kv_seq_len + kv_idx) * head_dim;
+
+                        d = 0;
+                        #ifdef __AVX2__
+                        __m256 v_sum = _mm256_setzero_ps();
+                        for (; d + 8 <= head_dim; d += 8) {
+                            __m256 v_q = _mm256_loadu_ps(q_vec.data() + d);
+                            __m256 v_k = _mm256_loadu_ps(key.data() + k_base_idx + d);
+                            v_sum = _mm256_fmadd_ps(v_q, v_k, v_sum);
+                        }
+                        // Horizontal sum
+                        v_sum = _mm256_hadd_ps(v_sum, v_sum);
+                        v_sum = _mm256_hadd_ps(v_sum, v_sum);
+                        float temp[8];
+                        _mm256_storeu_ps(temp, v_sum);
+                        score = temp[0] + temp[4];
+                        #endif
+                        for (; d < head_dim; ++d) {
+                            score += q_vec[d] * key[k_base_idx + d];
+                        }
+
+                        size_t local_kv_idx = kv_idx - kv_block_start;
+                        block_scores[local_kv_idx] = score;
+
+                        // AVX2-optimized weighted value: score * V
+                        size_t v_base_idx = ((b * num_key_value_heads + h_kv) * local_kv_seq_len + kv_idx) * head_dim;
+                        size_t weighted_v_base_idx = local_kv_idx * head_dim;
+
+                        d = 0;
+                        #ifdef __AVX2__
+                        __m256 v_score = _mm256_set1_ps(score);
+                        for (; d + 8 <= head_dim; d += 8) {
+                            __m256 v_v = _mm256_loadu_ps(value.data() + v_base_idx + d);
+                            __m256 v_weighted = _mm256_mul_ps(v_score, v_v);
+                            _mm256_storeu_ps(block_weighted_v.data() + weighted_v_base_idx + d, v_weighted);
+                        }
+                        #endif
+                        for (; d < head_dim; ++d) {
+                            block_weighted_v[weighted_v_base_idx + d] = score * value[v_base_idx + d];
+                        }
+                    }
+
+                    // Update online softmax statistics
+                    size_t stat_idx = (b * num_attention_heads + h) * local_q_seq_len + q_idx;
+
+                    float block_max = *std::max_element(block_scores.begin(), block_scores.end());
+                    float old_max = local_max[stat_idx];
+                    local_max[stat_idx] = std::max(local_max[stat_idx], block_max);
+
+                    // Compute exp sum for this block
+                    float block_exp_sum = 0.0f;
+                    std::vector<float> block_exp_scores(kv_block_end - kv_block_start);
+
+                    for (size_t kv_idx = kv_block_start; kv_idx < kv_block_end; ++kv_idx) {
+                        size_t global_kv_pos = rank * local_kv_seq_len + kv_idx;
+                        if (global_kv_pos > global_q_pos) {
+                            continue;
+                        }
+
+                        size_t local_kv_idx = kv_idx - kv_block_start;
+                        float exp_score = std::exp(block_scores[local_kv_idx] - local_max[stat_idx]);
+                        block_exp_scores[local_kv_idx] = exp_score;
+                        block_exp_sum += exp_score;
+                    }
+
+                    // Update global exp sum
+                    float scale_factor = std::exp(old_max - local_max[stat_idx]);
+                    local_exp_sum[stat_idx] = local_exp_sum[stat_idx] * scale_factor + block_exp_sum;
+
+                    // Update weighted value (AVX2-optimized)
+                    size_t output_idx = ((b * num_attention_heads + h) * local_q_seq_len + q_idx) * head_dim;
+
+                    // First apply scale_factor
+                    d = 0;
+                    #ifdef __AVX2__
+                    __m256 v_scale_factor = _mm256_set1_ps(scale_factor);
+                    for (; d + 8 <= head_dim; d += 8) {
+                        __m256 v_old = _mm256_loadu_ps(local_weighted_value.data() + output_idx + d);
+                        __m256 v_scaled = _mm256_mul_ps(v_old, v_scale_factor);
+                        _mm256_storeu_ps(local_weighted_value.data() + output_idx + d, v_scaled);
+                    }
+                    #endif
+                    for (; d < head_dim; ++d) {
+                        local_weighted_value[output_idx + d] *= scale_factor;
+                    }
+
+                    // Accumulate weighted values from this block (AVX2-optimized)
+                    for (size_t kv_idx = kv_block_start; kv_idx < kv_block_end; ++kv_idx) {
+                        size_t global_kv_pos = rank * local_kv_seq_len + kv_idx;
+                        if (global_kv_pos > global_q_pos) {
+                            continue;
+                        }
+
+                        size_t local_kv_idx = kv_idx - kv_block_start;
+                        float exp_score = block_exp_scores[local_kv_idx];
+
+                        d = 0;
+                        size_t weighted_v_base_idx = local_kv_idx * head_dim;
+                        #ifdef __AVX2__
+                        __m256 v_exp_score = _mm256_set1_ps(exp_score);
+                        for (; d + 8 <= head_dim; d += 8) {
+                            __m256 v_weighted_v = _mm256_loadu_ps(block_weighted_v.data() + weighted_v_base_idx + d);
+                            __m256 v_current = _mm256_loadu_ps(local_weighted_value.data() + output_idx + d);
+                            __m256 v_new = _mm256_fmadd_ps(v_exp_score, v_weighted_v, v_current);
+                            _mm256_storeu_ps(local_weighted_value.data() + output_idx + d, v_new);
+                        }
+                        #endif
+                        for (; d < head_dim; ++d) {
+                            local_weighted_value[output_idx + d] +=
+                                exp_score * block_weighted_v[weighted_v_base_idx + d];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 2: 跨rank归约 (MPI_Allreduce)
+    std::vector<float> global_max = local_max;
+    std::vector<float> global_exp_sum = local_exp_sum;
+
+    if (size > 1) {
+        MPI_Allreduce(MPI_IN_PLACE, global_max.data(), num_stats, MPI_FLOAT, MPI_MAX, comm);
+        MPI_Allreduce(MPI_IN_PLACE, global_exp_sum.data(), num_stats, MPI_FLOAT, MPI_SUM, comm);
+    }
+
+    // Step 3: 本地归一化修正 (AVX2-optimized)
+    std::vector<float> result_data(batch_size * num_attention_heads * local_q_seq_len * head_dim);
+
+    #pragma omp parallel for if(batch_size * num_attention_heads * local_q_seq_len * head_dim > 1000)
+    for (size_t idx = 0; idx < batch_size * num_attention_heads * local_q_seq_len * head_dim; ++idx) {
+        size_t b = idx / (num_attention_heads * local_q_seq_len * head_dim);
+        size_t remainder = idx % (num_attention_heads * local_q_seq_len * head_dim);
+        size_t h = remainder / (local_q_seq_len * head_dim);
+        remainder = remainder % (local_q_seq_len * head_dim);
+        size_t q_idx = remainder / head_dim;
+
+        size_t stat_idx = (b * num_attention_heads + h) * local_q_seq_len + q_idx;
+
+        float max_diff = local_max[stat_idx] - global_max[stat_idx];
+        float correction = std::exp(max_diff);
+
+        result_data[idx] = local_weighted_value[idx] * correction / global_exp_sum[stat_idx];
+    }
+
+    Shape result_shape({static_cast<long>(batch_size), static_cast<long>(num_attention_heads),
+                       static_cast<long>(local_q_seq_len), static_cast<long>(head_dim)});
+    return Tensor(std::move(result_data), result_shape);
+}
+
+#endif // HAS_AVX2_OPS_MPI
 
 #endif // MPI_VERSION
 

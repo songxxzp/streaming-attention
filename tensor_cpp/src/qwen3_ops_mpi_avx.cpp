@@ -308,12 +308,12 @@ Tensor qwen3_decoder_layer_mpi_avx(
     Tensor residual = hidden_states;
     Tensor hidden = rms_norm(hidden_states, &input_layernorm_weight, rms_norm_eps);
 
-    // Self-attention with MPI
+    // Self-attention with MPI+AVX2
     // Convert mpi_avx enums to mpi enums for the call
     mpi::ParallelStrategy mpi_strategy = static_cast<mpi::ParallelStrategy>(strategy);
     mpi::AttentionAlgorithm mpi_algorithm = static_cast<mpi::AttentionAlgorithm>(algorithm);
 
-    Tensor attn_output = qwen3::mpi::qwen3_attention_mpi_omp(
+    Tensor attn_output = qwen3::mpi::qwen3_attention_mpi_omp_avx2(
         hidden, num_attention_heads, num_key_value_heads, head_dim,
         qkv_projs, o_proj, q_norm_weight, k_norm_weight, cos, sin, comm,
         mpi_strategy, mpi_algorithm

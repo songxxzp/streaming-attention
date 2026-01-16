@@ -335,6 +335,23 @@ Tensor attention_sequence_online_softmax(
     MPI_Comm comm = MPI_COMM_WORLD
 );
 
+// AVX2-optimized version of sequence parallel attention
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __AVX2__
+Tensor attention_sequence_online_softmax_avx2(
+    const Tensor& query,
+    const Tensor& key,
+    const Tensor& value,
+    const Tensor* mask,
+    float scale,
+    int num_attention_heads,
+    int num_key_value_heads,
+    size_t global_seq_len,
+    MPI_Comm comm = MPI_COMM_WORLD
+);
+    #endif
+#endif
+
 /**
  * @brief MPI+OpenMP parallelized linear layer
  *

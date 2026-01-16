@@ -139,6 +139,27 @@ Tensor qwen3_attention_mpi_omp(
     AttentionAlgorithm algorithm
 );
 
+// AVX2-optimized version for x86-64 with AVX2 support
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __AVX2__
+Tensor qwen3_attention_mpi_omp_avx2(
+    const Tensor& hidden_states,
+    size_t num_attention_heads,
+    size_t num_key_value_heads,
+    size_t head_dim,
+    const Tensor& qkv_projs,
+    const Tensor& o_proj,
+    const Tensor& q_norm_weight,
+    const Tensor& k_norm_weight,
+    const Tensor& cos,
+    const Tensor& sin,
+    MPI_Comm comm,
+    ParallelStrategy strategy,
+    AttentionAlgorithm algorithm
+);
+    #endif
+#endif
+
 /**
  * @brief Qwen3 decoder layer with MPI+OpenMP parallelization
  *

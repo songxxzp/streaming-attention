@@ -514,14 +514,54 @@ Tensor qwen3_forward_mpi_omp(
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
 
-    // Embed tokens
-    Tensor hidden_states = embedding(input_ids, token_embedding);
-
-    // Compute RoPE frequencies (all ranks compute the same)
+    size_t batch_size = input_ids.shape()[0];
     size_t seq_len = input_ids.shape()[1];
+
+    // Embed tokens - USE CORRECT METHOD BASED ON STRATEGY
+    Tensor hidden_states;
+    if (strategy == ParallelStrategy::SEQUENCE) {
+        // True sequence parallel: distribute sequence positions, NO Allgather
+        hidden_states = ops::mpi::embedding_mpi_omp_no_allgather(
+            input_ids, token_embedding, -1, comm
+        );  // [batch, local_seq_len, hidden_size] - DISTRIBUTED
+    } else {  // HEAD_WISE
+        // Head-wise parallel: all ranks need full sequence
+        hidden_states = embedding(input_ids, token_embedding);
+        // [batch, seq_len, hidden_size] - FULL
+    }
+
+    // Compute RoPE frequencies
     auto rope_freqs = compute_rope_freqs(seq_len, head_dim);
-    Tensor cos = rope_freqs.first;
-    Tensor sin = rope_freqs.second;
+    Tensor cos, sin;
+
+    if (strategy == ParallelStrategy::SEQUENCE) {
+        // Extract local cos/sin for DISTRIBUTED sequence
+        size_t local_seq_len = hidden_states.shape()[1];
+        size_t rope_dim = head_dim / 2;
+
+        std::vector<float> cos_local_data(batch_size * local_seq_len * rope_dim);
+        std::vector<float> sin_local_data(batch_size * local_seq_len * rope_dim);
+
+        const float* cos_full_data = rope_freqs.first.data();
+        const float* sin_full_data = rope_freqs.second.data();
+
+        #pragma omp parallel for if(batch_size * local_seq_len * rope_dim > 1000)
+        for (size_t i = 0; i < batch_size; ++i) {
+            for (size_t j = 0; j < local_seq_len; ++j) {
+                size_t global_pos = rank * local_seq_len + j;
+                for (size_t k = 0; k < rope_dim; ++k) {
+                    cos_local_data[(i * local_seq_len + j) * rope_dim + k] = cos_full_data[global_pos * rope_dim + k];
+                    sin_local_data[(i * local_seq_len + j) * rope_dim + k] = sin_full_data[global_pos * rope_dim + k];
+                }
+            }
+        }
+
+        cos = Tensor(std::move(cos_local_data), Shape({static_cast<long>(batch_size), static_cast<long>(local_seq_len), static_cast<long>(rope_dim)}));
+        sin = Tensor(std::move(sin_local_data), Shape({static_cast<long>(batch_size), static_cast<long>(local_seq_len), static_cast<long>(rope_dim)}));
+    } else {
+        cos = rope_freqs.first;
+        sin = rope_freqs.second;
+    }
 
     // Process through decoder layers using new API
     for (size_t layer_idx = 0; layer_idx < num_layers; ++layer_idx) {
@@ -553,8 +593,34 @@ Tensor qwen3_forward_mpi_omp(
     // Final layernorm
     Tensor hidden_normed = rms_norm(hidden_states, &norm_weight, rms_norm_eps);
 
+    // For sequence parallel: Allgather to get full sequence
+    if (strategy == ParallelStrategy::SEQUENCE) {
+        size_t local_seq_len = hidden_normed.shape()[1];
+        size_t hidden_size = hidden_normed.shape()[2];
+
+        std::vector<float> hidden_full_data(batch_size * seq_len * hidden_size);
+
+        std::vector<int> recvcounts(size);
+        std::vector<int> displs(size);
+
+        for (int i = 0; i < size; ++i) {
+            recvcounts[i] = batch_size * local_seq_len * hidden_size;
+            displs[i] = i * batch_size * local_seq_len * hidden_size;
+        }
+
+        MPI_Allgatherv(
+            hidden_normed.data(), recvcounts[rank], MPI_FLOAT,
+            hidden_full_data.data(), recvcounts.data(), displs.data(), MPI_FLOAT, comm
+        );
+
+        hidden_normed = Tensor(std::move(hidden_full_data), Shape({
+            static_cast<long>(batch_size),
+            static_cast<long>(seq_len),
+            static_cast<long>(hidden_size)
+        }));
+    }
+
     // LM head projection to get logits
-    size_t batch_size = input_ids.shape()[0];
     size_t hidden_size = hidden_states.shape()[2];
     size_t vocab_size = lm_head.shape()[0];
     size_t num_samples = batch_size * seq_len;

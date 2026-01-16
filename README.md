@@ -2,6 +2,24 @@
 
 面向多 NUMA、多节点 CPU 集群的 Streaming Block Attention 并行化实现与 Qwen3 LLM 推理库。
 
+## 📄 完整论文
+
+**本项目的研究报告已整理为学术论文，请查看：[Paper.pdf](Paper.pdf)**
+
+该论文包含完整的：
+- 研究背景与动机
+- 方法设计与实现
+- 实验结果与分析（串行、OpenMP、MPI 并行性能对比）
+- 序列并行 vs 头维并行的系统性研究
+- Streaming Attention 算法优化效果
+- 在 Qwen3-0.6B 模型上的端到端性能评估
+
+**主要结论**：
+- Streaming Attention 相比传统方法提升 2.61× - 6.41×
+- 8 节点达到 14.29 tok/s 吞吐量
+- 序列并行 + online softmax 是最优组合
+- 算法优化优于算子优化（5.8× 收益比）
+
 ## 📁 项目结构
 
 ```

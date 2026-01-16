@@ -716,8 +716,9 @@ Tensor qwen3_decoder_layer_avx_with_cache(
         } else {
             // Prefill phase: use AVX2-optimized block-wise streaming attention
             // Handles causal constraint internally with AVX2 SIMD optimizations
+            // Use global block size configuration
             attn_output = self_attention_streaming_blockwise_avx2(
-                q_rope, k_repeated, v_repeated, scale, 32, 64
+                q_rope, k_repeated, v_repeated, scale, g_q_block_size, g_kv_block_size
             );
         }
     } else {

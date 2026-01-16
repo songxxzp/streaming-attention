@@ -1404,3 +1404,9 @@ void broadcast(Tensor& tensor, int root, MPI_Comm comm) {
 
 } // namespace ops
 } // namespace tensor_cpp
+
+// Global block size configuration for streaming attention
+namespace tensor_cpp {
+    int g_q_block_size = 32;   // Default query block size
+    int g_kv_block_size = 64;  // Default key/value block size
+}

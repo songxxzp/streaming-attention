@@ -315,4 +315,12 @@ void broadcast(Tensor& tensor, int root, MPI_Comm comm = MPI_COMM_WORLD);
 } // namespace ops
 } // namespace tensor_cpp
 
+// Global block size configuration for streaming attention
+// These variables control the block size for streaming blockwise attention
+// Can be set before calling qwen3_forward to customize performance
+namespace tensor_cpp {
+    extern int g_q_block_size;   // Query block size for streaming attention [default: 32]
+    extern int g_kv_block_size;  // Key/Value block size for streaming attention [default: 64]
+}
+
 #endif // TENSOR_CPP_OPS_H

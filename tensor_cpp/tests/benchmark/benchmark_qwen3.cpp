@@ -61,6 +61,10 @@ struct BenchmarkConfig {
     int num_threads = 16;                  // OpenMP线程数
     int warmup = 2;                        // 预热次数
 
+    // Block size for streaming attention
+    int q_block_size = 128;                 // Query block size [default: 32]
+    int kv_block_size = 128;                // Key/Value block size [default: 64]
+
     bool verbose = false;
     bool use_kv_cache = true;              // decode阶段是否使用KV cache
     bool compare_kv_cache = false;         // 对比所有方法的KV cache加速效果
@@ -93,6 +97,12 @@ void print_usage(const char* prog) {
               << "  --iters N                 迭代次数 [默认: 10]\n"
               << "  --threads N               OpenMP线程数 [默认: 16]\n"
               << "  --warmup N                预热次数 [默认: 2]\n"
+              << "\n"
+              << "Streaming Attention配置:\n"
+              << "  --q-block-size N          Query块大小 (用于streaming attention) [默认: 32]\n"
+              << "  --kv-block-size N         Key/Value块大小 (用于streaming attention) [默认: 64]\n"
+              << "\n"
+              << "其他选项:\n"
               << "  --use-kv-cache            decode阶段使用KV cache\n"
               << "  --no-kv-cache             decode阶段不使用KV cache\n"
               << "  --compare-kv-cache        对比所有方法的KV cache加速效果\n"
@@ -132,6 +142,10 @@ BenchmarkConfig parse_args(int argc, char** argv) {
             cfg.num_threads = std::atoi(argv[++i]);
         } else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc) {
             cfg.warmup = std::atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--q-block-size") == 0 && i + 1 < argc) {
+            cfg.q_block_size = std::atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--kv-block-size") == 0 && i + 1 < argc) {
+            cfg.kv_block_size = std::atoi(argv[++i]);
         } else if (strcmp(argv[i], "--use-kv-cache") == 0) {
             cfg.use_kv_cache = true;
         } else if (strcmp(argv[i], "--no-kv-cache") == 0) {
@@ -1047,6 +1061,10 @@ int main(int argc, char** argv) {
 #endif
 
     BenchmarkConfig cfg = parse_args(argc, argv);
+
+    // 设置全局block size for streaming attention
+    tensor_cpp::g_q_block_size = cfg.q_block_size;
+    tensor_cpp::g_kv_block_size = cfg.kv_block_size;
 
     // 设置OpenMP线程数
     omp_set_num_threads(cfg.num_threads);

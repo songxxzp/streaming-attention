@@ -4,7 +4,7 @@
 #
 # 目标：评估多节点MPI环境下不同节点数和序列长度的性能
 # 配置：1/2/4/8 nodes, 16 threads/node
-#       batch*len = 1*128 / 8*128 / 1*1024 / 1*4096 / 1*65536
+#       batch*len = 1*128 / 1*1024 / 1*2048
 ###############################################################################
 
 set -e  # 遇到错误立即退出
@@ -19,16 +19,16 @@ mkdir -p "$OUTPUT_DIR"
 METHOD="avx2"
 NUM_THREADS_PER_NODE=26
 declare -a NODES=(1 2 4 8)  # 节点数
-declare -a SEQ_LENS=(128 1024 8192 65536)  # 序列长度
-declare -a BATCH_SIZES=(1 8)  # batch size
+declare -a SEQ_LENS=(128 1024 2048)  # 序列长度
+declare -a BATCH_SIZES=(1)  # batch size
 
 # 并行策略组合
-declare -a PARALLEL_STRATEGIES=("headwise" "sequence")
+declare -a PARALLEL_STRATEGIES=("sequence")
 declare -a ATTENTION_ALGOS=("standard" "online_softmax")
 
 # 迭代配置
-ITERS=3
-WARMUP=2
+ITERS=2
+WARMUP=1
 
 echo "============================================================"
 echo "       实验3: MPI并行性能测试"
@@ -70,14 +70,14 @@ for NUM_NODES in "${NODES[@]}"; do
                 continue
             fi
 
+            # 序列长度 > 1024时，只使用num_nodes >= 4
+            if [[ $SEQ_LEN -gt 1024 && $NUM_NODES -lt 4 ]]; then
+                echo "跳过: nodes=${NUM_NODES}, batch=${BATCH_SIZE}, seq_len=${SEQ_LEN} (seq_len>1024仅测试num_nodes>=4)"
+                continue
+            fi
+
             for STRATEGY in "${PARALLEL_STRATEGIES[@]}"; do
                 for ALGO in "${ATTENTION_ALGOS[@]}"; do
-
-                    # 跳过 sequence + standard 组合
-                    if [[ "$STRATEGY" == "sequence" && "$ALGO" == "standard" ]]; then
-                        echo "跳过: nodes=${NUM_NODES}, ${STRATEGY} + ${ALGO} (不推荐)"
-                        continue
-                    fi
 
                     echo "------------------------------------------------------------"
                     echo "测试: nodes=${NUM_NODES} | ppn=${PROCESSES_PER_NODE} | batch=${BATCH_SIZE} | seq_len=${SEQ_LEN} | ${STRATEGY} | ${ALGO}"

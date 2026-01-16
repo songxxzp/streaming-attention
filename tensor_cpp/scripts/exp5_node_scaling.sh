@@ -19,12 +19,13 @@ mkdir -p "$OUTPUT_DIR"
 # 实验配置
 METHOD="avx2"
 declare -a K_VALUES=(1 2 4 8 16)  # 扩展因子
+declare -a SEQ_LENS=(128 1024)     # 序列长度
 declare -a PARALLEL_STRATEGIES=("sequence")
 declare -a ATTENTION_ALGOS=("standard" "online_softmax")
 
 # 迭代配置
-ITERS=3
-WARMUP=2
+ITERS=2
+WARMUP=1
 MAX_THREADS=26  # 单机最大线程数
 
 echo "============================================================"
@@ -33,6 +34,7 @@ echo "============================================================"
 echo "模型: $MODEL_PATH"
 echo "方法: ${METHOD}"
 echo "k值: ${K_VALUES[@]} (总核心数 = 16 × k)"
+echo "序列长度: ${SEQ_LENS[@]}"
 echo "并行策略: ${PARALLEL_STRATEGIES[@]}"
 echo "Attention算法: ${ATTENTION_ALGOS[@]}"
 echo "最大线程数/进程: ${MAX_THREADS}"
@@ -41,7 +43,7 @@ echo ""
 
 # 结果文件头
 RESULTS_FILE="${OUTPUT_DIR}/node_scaling_results.csv"
-echo "k,total_cores,nodes,processes_per_node,total_processes,threads_per_process,parallel_strategy,attention_algo,total_time_ms,time_per_token_ms,throughput_tok_s,timestamp" > "$RESULTS_FILE"
+echo "seq_len,k,total_cores,nodes,processes_per_node,total_processes,threads_per_process,parallel_strategy,attention_algo,total_time_ms,time_per_token_ms,throughput_tok_s,timestamp" > "$RESULTS_FILE"
 
 # 遍历所有k值
 for K in "${K_VALUES[@]}"; do
@@ -120,54 +122,55 @@ for K in "${K_VALUES[@]}"; do
 
         echo "配置: ${NUM_NODES}节点 × ${PROCESSES_PER_NODE}进程/节点 × ${THREADS_PER_PROCESS}线程/进程 = ${TOTAL_CORES}核心"
 
-        for STRATEGY in "${PARALLEL_STRATEGIES[@]}"; do
-            for ALGO in "${ATTENTION_ALGOS[@]}"; do
+        # 遍历所有序列长度
+        for SEQ_LEN in "${SEQ_LENS[@]}"; do
+            echo "  序列长度: ${SEQ_LEN}"
 
-                # 跳过 sequence + standard 组合
-                if [[ "$STRATEGY" == "sequence" && "$ALGO" == "standard" ]]; then
-                    continue
-                fi
+            for STRATEGY in "${PARALLEL_STRATEGIES[@]}"; do
+                for ALGO in "${ATTENTION_ALGOS[@]}"; do
 
-                echo "  测试: ${STRATEGY} | ${ALGO}"
+                    echo "    测试: ${STRATEGY} | ${ALGO}"
 
-                # 运行benchmark
-                OUTPUT="${OUTPUT_DIR}/k${K}_nodes${NUM_NODES}_ppn${PROCESSES_PER_NODE}_tpp${THREADS_PER_PROCESS}_${STRATEGY}_${ALGO}.log"
+                    # 运行benchmark
+                    OUTPUT="${OUTPUT_DIR}/k${K}_nodes${NUM_NODES}_ppn${PROCESSES_PER_NODE}_tpp${THREADS_PER_PROCESS}_seq${SEQ_LEN}_${STRATEGY}_${ALGO}.log"
 
-                # SLURM srun命令格式
-                srun --mpi=pmix \
-                     -p student \
-                     -N $NUM_NODES \
-                     --ntasks=$NUM_PROCESSES \
-                     --ntasks-per-node=$PROCESSES_PER_NODE \
-                     --cpus-per-task=$THREADS_PER_PROCESS \
-                     env OMP_NUM_THREADS=$THREADS_PER_PROCESS \
-                     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
-                     $BENCHMARK \
-                        --model "$MODEL_PATH" \
-                        --method "$METHOD" \
-                        --parallel-strategy "$STRATEGY" \
-                        --attention-algo "$ALGO" \
-                        --batch-size 1 \
-                        --prompt-len 1024 \
-                        --phase prefill \
-                        --iters $ITERS \
-                        --warmup $WARMUP \
-                        --threads $THREADS_PER_PROCESS \
-                        2>&1 | tee "$OUTPUT"
+                    # SLURM srun命令格式
+                    srun --mpi=pmix \
+                         -p student \
+                         -N $NUM_NODES \
+                         --ntasks=$NUM_PROCESSES \
+                         --ntasks-per-node=$PROCESSES_PER_NODE \
+                         --cpus-per-task=$THREADS_PER_PROCESS \
+                         env OMP_NUM_THREADS=$THREADS_PER_PROCESS \
+                         LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH \
+                         timeout 1200 \
+                         $BENCHMARK \
+                            --model "$MODEL_PATH" \
+                            --method "$METHOD" \
+                            --parallel-strategy "$STRATEGY" \
+                            --attention-algo "$ALGO" \
+                            --batch-size 1 \
+                            --prompt-len $SEQ_LEN \
+                            --phase prefill \
+                            --iters $ITERS \
+                            --warmup $WARMUP \
+                            --threads $THREADS_PER_PROCESS \
+                            2>&1 | tee "$OUTPUT"
 
-                # 提取结果
-                TOTAL_TIME=$(grep "总时间:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
-                TIME_PER_TOKEN=$(grep "平均时间/token:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
-                THROUGHPUT=$(grep "吞吐量:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
+                    # 提取结果
+                    TOTAL_TIME=$(grep "总时间:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
+                    TIME_PER_TOKEN=$(grep "平均时间/token:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
+                    THROUGHPUT=$(grep "吞吐量:" "$OUTPUT" | awk '{print $2}' | tr -d ' ')
 
-                # 写入CSV
-                TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-                echo "${K},${TOTAL_CORES},${NUM_NODES},${PROCESSES_PER_NODE},${NUM_PROCESSES},${THREADS_PER_PROCESS},${STRATEGY},${ALGO},${TOTAL_TIME},${TIME_PER_TOKEN},${THROUGHPUT},${TIMESTAMP}" >> "$RESULTS_FILE"
+                    # 写入CSV
+                    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+                    echo "${SEQ_LEN},${K},${TOTAL_CORES},${NUM_NODES},${PROCESSES_PER_NODE},${NUM_PROCESSES},${THREADS_PER_PROCESS},${STRATEGY},${ALGO},${TOTAL_TIME},${TIME_PER_TOKEN},${THROUGHPUT},${TIMESTAMP}" >> "$RESULTS_FILE"
 
-                echo "    结果: 总时间=${TOTAL_TIME}ms, 吞吐量=${THROUGHPUT} tok/s"
+                    echo "      结果: 总时间=${TOTAL_TIME}ms, 吞吐量=${THROUGHPUT} tok/s"
+                done
             done
+            echo ""
         done
-        echo ""
     done
 done
 

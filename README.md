@@ -121,6 +121,9 @@ cd attention
 # 编译所有测试程序
 make
 
+# 或使用项目根目录的编译脚本
+bash ../scripts/compile_attention.sh
+
 # 运行完整性能对比测试
 python scripts/compare_attention_full.py \
   --seq-lens 1024 8192 \
@@ -139,6 +142,11 @@ python scripts/compare_attention_full.py \
 - 各实现的延迟和吞吐量对比
 - 加速比分析
 - 通信开销统计 (MPI版本)
+
+**注意**: `compare_attention_full.py` 支持从任意位置运行：
+- 项目根目录 → 自动使用 `./attention/` 路径
+- `attention/` 目录 → 自动使用当前目录
+- `attention/scripts/` 目录 → 自动使用 `..` 路径
 
 ### Qwen3 性能实验脚本
 

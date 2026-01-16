@@ -28,6 +28,58 @@ except ImportError:
 # 不再需要numpy，使用Python内置方法
 
 # ============================================================================
+# 路径自动检测
+# ============================================================================
+
+def detect_project_paths():
+    """检测当前目录并设置正确的路径"""
+    current_dir = Path(os.getcwd())
+    parent_dir = current_dir.parent
+
+    # 检查是否在 attention/scripts/ 目录下
+    if current_dir.name == "scripts" and parent_dir.name == "attention":
+        # 在 attention/scripts/ 下运行
+        attention_dir = parent_dir
+        project_root = parent_dir.parent
+        exec_prefix = ".."
+        compile_script = "../scripts/compile_attention.sh" if (project_root / "scripts" / "compile_attention.sh").exists() else None
+        makefile = "../Makefile"
+    # 检查是否在项目根目录下
+    elif (current_dir / "attention" / "src").exists():
+        # 在项目根目录下运行
+        attention_dir = current_dir / "attention"
+        project_root = current_dir
+        exec_prefix = "./attention"
+        compile_script = "./scripts/compile_attention.sh"
+        makefile = "./attention/Makefile"
+    # 检查是否在 attention/ 目录下
+    elif (current_dir / "src" / "attention.h").exists():
+        # 在 attention/ 目录下运行
+        attention_dir = current_dir
+        project_root = current_dir.parent
+        exec_prefix = "."
+        compile_script = "../scripts/compile_attention.sh" if (project_root / "scripts" / "compile_attention.sh").exists() else None
+        makefile = "./Makefile"
+    else:
+        # 未知位置，使用默认值
+        attention_dir = current_dir
+        project_root = current_dir
+        exec_prefix = "."
+        compile_script = None
+        makefile = None
+
+    return {
+        'attention_dir': attention_dir,
+        'project_root': project_root,
+        'exec_prefix': exec_prefix,
+        'compile_script': compile_script,
+        'makefile': makefile
+    }
+
+# 检测路径
+PATHS = detect_project_paths()
+
+# ============================================================================
 # 默认配置参数
 # ============================================================================
 
@@ -43,13 +95,13 @@ DEFAULT_MPI_BLOCK_SIZE = 128
 DEFAULT_MPI_RANKS_LIST = [1, 2]
 DEFAULT_MPI_OMP_THREADS_LIST = [1, 2, 4, 8]
 
-# C++可执行文件默认路径
-DEFAULT_CPP_NAIVE_SERIAL = "./attention/test_naive"
-DEFAULT_CPP_NAIVE_OMP = "./attention/test_naive_omp"
-DEFAULT_CPP_STREAMING_SERIAL = "./attention/test_streaming"
-DEFAULT_CPP_STREAMING_OMP = "./attention/test_streaming_omp"
-DEFAULT_CPP_NAIVE_MPI = "./attention/test_naive_mpi"
-DEFAULT_CPP_STREAMING_MPI = "./attention/test_streaming_mpi"
+# C++可执行文件默认路径（基于检测到的路径）
+DEFAULT_CPP_NAIVE_SERIAL = f"{PATHS['exec_prefix']}/test_naive"
+DEFAULT_CPP_NAIVE_OMP = f"{PATHS['exec_prefix']}/test_naive_omp"
+DEFAULT_CPP_STREAMING_SERIAL = f"{PATHS['exec_prefix']}/test_streaming"
+DEFAULT_CPP_STREAMING_OMP = f"{PATHS['exec_prefix']}/test_streaming_omp"
+DEFAULT_CPP_NAIVE_MPI = f"{PATHS['exec_prefix']}/test_naive_mpi"
+DEFAULT_CPP_STREAMING_MPI = f"{PATHS['exec_prefix']}/test_streaming_mpi"
 DEFAULT_MPIRUN = "mpirun"
 
 # ============================================================================
@@ -88,38 +140,64 @@ def test_pytorch_sdpa(seq_len: int, hidden_dim: int, warmup: int, repeat: int) -
 # ============================================================================
 
 def compile_cpp_executables():
-    """编译C++可执行文件（使用compile_attention.sh脚本）"""
-    script_path = Path("./scripts/compile_attention.sh")
-
-    if not script_path.exists():
-        print("✗ 错误: compile_attention.sh脚本不存在")
-        print("  请确保在项目根目录运行此脚本")
-        return False
-
+    """编译C++可执行文件（优先使用Makefile，其次使用compile_attention.sh）"""
     print("检查并编译C++可执行文件...")
 
-    result = subprocess.run(
-        ["bash", str(script_path)],
-        capture_output=True,
-        text=True
-    )
+    # 尝试使用 Makefile
+    if PATHS['makefile'] and Path(PATHS['makefile']).exists():
+        print(f"使用 Makefile: {PATHS['makefile']}")
+        result = subprocess.run(
+            ["make", "-C", str(Path(PATHS['makefile']).parent)],
+            capture_output=True,
+            text=True
+        )
 
-    if result.returncode != 0:
-        print("✗ 编译失败:")
-        print(result.stderr)
+        if result.returncode != 0:
+            print("✗ Makefile 编译失败:")
+            print(result.stderr)
+            return False
+
+        print(result.stdout)
+        return True
+
+    # 尝试使用 compile_attention.sh
+    elif PATHS['compile_script'] and Path(PATHS['compile_script']).exists():
+        print(f"使用编译脚本: {PATHS['compile_script']}")
+        result = subprocess.run(
+            ["bash", str(PATHS['compile_script'])],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            print("✗ 编译脚本执行失败:")
+            print(result.stderr)
+            return False
+
+        # 显示编译输出（去掉颜色代码以保持整洁）
+        for line in result.stdout.split('\n'):
+            if line.strip():
+                # 移除ANSI颜色代码
+                clean_line = line
+                clean_line = clean_line.replace('\033[0;31m', '').replace('\033[0;32m', '')
+                clean_line = clean_line.replace('\033[0;33m', '').replace('\033[0;34m', '')
+                clean_line = clean_line.replace('\033[0m', '')
+                print(clean_line)
+
+        return True
+
+    else:
+        print("✗ 错误: 未找到编译脚本或Makefile")
+        print(f"  当前目录: {os.getcwd()}")
+        print(f"  期望位置:")
+        print(f"    - Makefile: {PATHS['makefile']}")
+        print(f"    - compile_attention.sh: {PATHS['compile_script']}")
+        print("")
+        print("  请确保在以下任一位置运行:")
+        print("    1. 项目根目录")
+        print("    2. attention/ 目录")
+        print("    3. attention/scripts/ 目录")
         return False
-
-    # 显示编译输出（去掉颜色代码以保持整洁）
-    for line in result.stdout.split('\n'):
-        if line.strip():
-            # 移除ANSI颜色代码
-            clean_line = line
-            clean_line = clean_line.replace('\033[0;31m', '').replace('\033[0;32m', '')
-            clean_line = clean_line.replace('\033[0;33m', '').replace('\033[0;34m', '')
-            clean_line = clean_line.replace('\033[0m', '')
-            print(clean_line)
-
-    return True
 
 
 def test_cpp_attention(seq_len: int, hidden_dim: int, block_size: int,
@@ -384,6 +462,18 @@ def run_comparison(args):
     print("=" * 100)
     print(" " * 25 + "Attention性能对比 - Naive vs Streaming vs PyTorch")
     print("=" * 100)
+    print()
+
+    # 显示路径检测信息
+    print(f"路径检测:")
+    print(f"  当前目录: {os.getcwd()}")
+    print(f"  项目根目录: {PATHS['project_root']}")
+    print(f"  attention目录: {PATHS['attention_dir']}")
+    print(f"  可执行文件前缀: {PATHS['exec_prefix']}/")
+    if PATHS['makefile']:
+        print(f"  Makefile: {PATHS['makefile']}")
+    if PATHS['compile_script']:
+        print(f"  编译脚本: {PATHS['compile_script']}")
     print()
 
     print(f"测试配置:")
